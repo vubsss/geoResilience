@@ -1,7 +1,8 @@
 # GeoResilience
 
-GeoResilience analyzes road network structure and resilience. Tickets 01–04 provide input,
-cleaning, physical road links, exact centrality metrics, redundancy screening, and auditable outputs. Later analysis tickets are
+GeoResilience analyzes road network structure and resilience. Tickets 01–05 provide input,
+cleaning, physical road links, exact centralities, redundancy screening, single-road damage,
+information centrality, and auditable outputs. Later analysis tickets are
 tracked in [TICKET_UPDATES.md](TICKET_UPDATES.md).
 
 Install with Python 3.10 or newer:
@@ -267,7 +268,8 @@ The summary also records exact budget bytes, the permitted chunk rows and the nu
 The shortest-path engine reserves three float64 blocks per worker and uses
 `max(1, floor(budget_bytes / (N * 8 * 3 * n_jobs)))` rows per chunk. It computes shortest paths,
 straightness and efficiency contributions together, then returns only reduced values from each
-joblib worker. A whole distance matrix is never cached. One chunk is the minimum even if the
+joblib worker. Ticket 03 does not cache a whole distance matrix; Ticket 05 optionally caches its
+removal baseline, as described below. One chunk is the minimum even if the
 configured budget is smaller than one row's workspace; Python, graph and worker overhead are
 additional to the block budget. NetworKit computes exact weighted node and edge betweenness with
 `n_jobs` threads. A single-chunk shortest-path calculation avoids launching worker processes.
@@ -342,11 +344,11 @@ additional to the shortest-path block budget documented above.
 | edges: `detour_none` | True when a required alternative route does not exist |
 | edges: `is_directed_bridge` | No directed alternative, despite not being an undirected bridge |
 | edges: `candidate_reason` | Semicolon-separated selection reasons, possibly empty |
-| edges: `is_criticality_candidate` | Selected for full link-failure recomputation in later tickets |
+| edges: `is_criticality_candidate` | Selected for full link-failure recomputation |
 | edges: `is_analytic_bridge` | Selected for analytic bridge handling instead of full recomputation |
 | nodes: `is_articulation` | Removing this junction disconnects the undirected network |
 | nodes: `artic_max_cut` | Surviving nodes outside the largest component after removing the junction |
-| nodes: `is_info_candidate` | Selected for later information-centrality recomputation |
+| nodes: `is_info_candidate` | Selected for information-centrality recomputation |
 
 These cut counts measure **graph nodes**, not population. For example, removing a four-leaf star's
 hub leaves four isolated nodes: one is the largest remaining component, so `artic_max_cut=3`.
@@ -374,8 +376,8 @@ candidate-set sizes and overlapping counts by reason. If no finite detours exist
 are JSON null. Screening runtimes join `metrics.runtime_seconds`. The report adds a **Redundancy**
 section and top 20 bridges by cut-side size and non-bridges by detour, with names and OSM way IDs.
 `figures/redundancy_map.png` shows bridges in red, directed bridges in orange and other links in grey.
-Candidate selection prepares tickets 05 and 11; damage and information-centrality scores are not
-computed yet. The efficiency convention documented for ticket 03 remains unchanged.
+Candidate selection feeds Ticket 05's damage/information calculations and prepares Ticket 11.
+The efficiency convention documented for ticket 03 remains unchanged.
 
 ### Run and inspect ticket 04
 
@@ -416,3 +418,129 @@ To test `all: true`, copy the ring config, set both top-k limits to 0 and add `a
 reasons. Set `exact_info_max_nodes: 0`, `k_nodes: 2`, `all: false` to exercise node screening on the
 ring: exactly 2 nodes are selected because there are no articulations. The generated examples
 disable consolidation and declare GraphML simplified to preserve their known graph topology.
+
+## Road damage and information centrality (ticket 05)
+
+Every run now closes each candidate physical road independently and measures the resulting
+damage. All directed edges of that road are removed together. Analytic bridges are also evaluated;
+roads outside these sets and self-loops retain null scores. Closing the shortest parallel road
+allows a longer surviving road to take over. No new configuration section is needed: the
+`criticality` settings above select roads and junctions.
+
+Road failures use directed travel by default (`analysis.directed_removal: true`). Setting this
+flag to false explicitly runs undirected road closures instead; the summary and report state the
+mode. The baseline directed efficiency is saved as `metrics.criticality.baseline_efficiency` and
+can differ from Ticket 03's undirected `metrics.global_efficiency`.
+
+| New output field | Definition |
+| --- | --- |
+| edges: `eff_drop` | `(E - E_after) / E`, using mean reciprocal shortest-path length |
+| edges: `disc_pair_frac` | Previously reachable ordered pairs made unreachable / `N * (N - 1)` |
+| edges: `extra_km_total` | Sum of additional distance for pairs reachable before **and** after, in km |
+| edges: `affected_pairs` | Number of still-reachable ordered pairs whose distance increased |
+| edges: `extra_m_mean_affected` | Extra metres per such pair; null if there are none |
+| edges: `damage_method` | `full` for affected-source recomputation, `analytic` for analytic bridges; null if unevaluated |
+| edges: `crit_rank` | 1 = highest efficiency drop; ties use higher disconnected-pair fraction, then lower `link_id` |
+| nodes: `information` | Relative undirected efficiency loss after removing every edge incident to this node |
+
+All denominators retain the original N. Unreachable pairs contribute zero efficiency.
+Disconnected trips do **not** enter the extra-distance metrics: bridge closures therefore have
+zero extra distance and zero affected pairs, despite positive efficiency and connectivity damage.
+Ordered pairs count A→B and B→A separately. These are structural trip-pair measures, using every
+pair equally rather than observed traffic demand. An unevaluated score is null, not evidence of
+zero damage. If baseline efficiency is zero, relative efficiency loss and information are undefined
+and remain null; such links have no rank.
+
+Information centrality always uses the undirected minimum-length graph. Junction deactivation
+isolates the node and keeps it in the node set; it does not delete the node or renormalize N.
+`metrics.information.coverage` is `all` when every node was evaluated, otherwise `candidates`.
+Non-candidate nodes have null `information`. Its baseline efficiency and finite statistics are
+recorded alongside the candidate count.
+
+The node-deactivation operation and relative-loss form follow page 2 of
+[AP2](papers/AP2-centrality_measures_in_urban_networks.pdf), but **the efficiency convention differs**:
+this project uses inverse-distance efficiency `mean(1/d)`, in 1/metres, as specified in Tickets 03/05.
+AP2's spatial efficiency is `mean(d_E/d)`, dimensionless. Information scores here must not be
+presented as numerical replications of AP2's spatial-efficiency scores.
+
+### Exact shortcuts, caching and resource use
+
+The reusable `ActiveEdgeGraph` retains every directed arc's physical-road membership. It sorts
+arcs once, then rebuilds minimum-parallel-edge CSR graphs in O(m) from an active-edge mask for
+closures or junction isolation. The remaining road set is collapsed **after** removal.
+
+`AffectedSourceRecompute.affected_sources(link_id)` obtains endpoint distance columns by running
+Dijkstra on the reversed baseline graph. A source is included if `d(i,u) + L` equals `d(i,v)`
+with relative tolerance `1e-9`, for any removed direction. Tied paths may select extra sources;
+recomputing them remains exact. Only selected rows are recomputed, in memory-bounded chunks.
+The API also accepts a distance cutoff and generic reducers for Ticket 11.
+
+Small-side bridges lose precisely their cross-cut pairs. With uniform weights their disconnected
+fraction is `2 * |S| * (N - |S|) / (N * (N - 1))`. Forward and reversed distances from S give the
+lost efficiency contributions; inside-side distances are unchanged. Cached distances are reused
+when available. Junction information uses full chunked all-pairs recomputation, with source chunks
+parallelized through `analysis.n_jobs`; the link shortcut is not applied to junctions.
+
+The optional float64 baseline cache is enabled automatically only when the N×N matrix **plus**
+at least one eight-block working chunk per configured worker fit `analysis.max_memory_gb`.
+It uses a temporary memory-mapped file to share distances with workers without repeatedly copying
+the matrix. Temporary disk space is checked; insufficient space falls back to recomputed baseline
+rows. The temporary file is deleted when the calculation completes or raises an error.
+`summary.json.computation` records cache mode/bytes, remaining working budget and the total affected
+sources used for full-method closures. Temporary paths are not written into reusable configs.
+
+Removal and information chunks conservatively allow eight float64 blocks per worker, so their
+row limit is `max(1, floor(working_budget / (N * 8 * 8 * n_jobs)))`. Graphs, process overhead and
+the minimum one-row workspace are additional to the block budget, as in Ticket 03.
+The library accepts optional finite nonnegative node weights: efficiency and disconnected-pair
+fractions use `W_i * W_j`, normalized over distinct pairs. Only uniform-weight columns are exported
+in Ticket 05; population input and `_pop` exports are deferred to Ticket 12.
+
+`metrics.criticality` records evaluated counts by method, the top 20 ranked roads, and totals over
+independent single-road closures. These totals may count a trip repeatedly across different
+experiments; they do not describe simultaneous road closures. The report adds **Critical links**
+and **Information centrality** sections. `figures/critical_links_map.png` overlays up to 50 ranked
+roads on a grey network, coloured by efficiency loss. Timestamped progress includes completed
+links/nodes and estimated remaining time, with heartbeats during long calculations.
+
+### Run and inspect ticket 05
+
+From the repository root in your activated environment:
+
+```sh
+python examples/create_ticket05_demo.py
+georesilience run --config examples/ticket05-ring.yaml --overwrite
+georesilience run --config examples/ticket05-path.yaml --overwrite
+georesilience run --config examples/ticket05-star.yaml --overwrite
+georesilience run --config examples/ticket05-parallel.yaml --overwrite
+PYTHONPATH= PYTEST_DISABLE_PLUGIN_AUTOLOAD=1 python -m pytest -q
+```
+
+All roads are 100 m except the 150 m parallel backup. All roads and nodes are selected; bridges
+still use analytic handling under `all: true`.
+
+| Demo | Expected result |
+| --- | --- |
+| Four-road ring | Every road: `eff_drop=2/15`, `disc_pair_frac=0`, `extra_km_total=0.4`, `affected_pairs=2`, mean extra 200 m |
+| Ring nodes | Every node: `information=0.5` |
+| Four-node path | Middle road: `eff_drop=7/13`, `disc_pair_frac=2/3`, `crit_rank=1` |
+| Path roads | All three analytic; extra distance and affected count zero; mean affected distance null |
+| Five-node star | Hub: `information=1`; leaves: `information=5/14` |
+| Parallel roads | Closing 100 m road: `eff_drop=1/3`, extra 0.1 km, 2 affected pairs, mean extra 50 m |
+| Parallel roads | Closing 150 m road: efficiency drop 0, extra distance 0, no affected pairs |
+
+Open each `results/ticket05-*/network.gpkg` in QGIS and inspect `edges` and `nodes`. Use **Graduated**
+symbology on `eff_drop` for roads or `information` for junctions. Compare the report's ranking with
+`crit_rank`, inspect the critical-road PNG, and open `data/ticket05-demo/*-input.gpkg` for the inputs.
+Equal damage scores in the symmetric ring and star are expected.
+
+For candidate-only output, copy the ring YAML and set `all: false`, `k_betweenness: 1`,
+`k_detour: 0`, `exact_info_max_nodes: 0`, and `k_nodes: 1`. Run to another output directory:
+exactly one road and one junction receive scores; other scores are empty. To force baseline-row
+recomputation, set `analysis.max_memory_gb: 0.0000001` in a demo copy; its computation metadata should
+say `criticality_baseline: recomputed` and metric values should agree with the cached run.
+This tiny budget deliberately invokes the documented minimum-row exception.
+To check analytic handling against the full method, copy the path config and set
+`bridge_analytic_max_side: 0`; the three roads switch to `damage_method=full` with matching damage.
+Cost grows with the candidate count: complete information and every-road failure runs on large
+city networks are expensive. Start with the default candidate limits before choosing `all: true`.

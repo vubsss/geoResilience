@@ -1,10 +1,26 @@
-"""Exported figures for degree, exact centralities, and redundancy."""
+"""Exported figures for degree, centralities, redundancy, and road criticality."""
 
 import numpy as np
 
 NODE_MEASURES = ("closeness", "straightness", "betweenness")
 FIGURE_FILENAMES = ("degree_hist.png", *(f"{name}_ccdf.png" for name in NODE_MEASURES),
-                    "edge_betweenness_map.png", "redundancy_map.png")
+                    "edge_betweenness_map.png", "redundancy_map.png", "critical_links_map.png")
+
+
+def _critical_map_canvas(links):
+    import matplotlib.pyplot as plt
+
+    xmin, ymin, xmax, ymax = links.total_bounds
+    width, height = max(xmax - xmin, 1), max(ymax - ymin, 1)
+    size = ((8, max(2.5, 8 * height / width)) if width >= height
+            else (max(2.5, 8 * width / height), 8))
+    fig, ax = plt.subplots(figsize=size)
+    # Automatic limits on a zero-height/width network at large UTM coordinates
+    # can pad by kilometres and make the roads invisible.
+    padding = max(width, height) * 0.08
+    ax.set_xlim(xmin - padding, xmax + padding)
+    ax.set_ylim(ymin - padding, ymax + padding)
+    return fig, ax
 
 
 def write_figures(nodes, links, folder):
@@ -62,4 +78,16 @@ def write_figures(nodes, links, folder):
     ax.set_title("Physical links by redundancy")
     ax.set_axis_off()
     fig.savefig(folder / "redundancy_map.png", bbox_inches="tight", dpi=180)
+    plt.close(fig)
+
+    fig, ax = _critical_map_canvas(links)
+    links.plot(ax=ax, color="lightgrey", linewidth=0.7)
+    critical = links[links.crit_rank.notna() & (links.crit_rank <= 50)].copy()
+    if not critical.empty:
+        critical.plot(ax=ax, column="eff_drop", cmap="YlOrRd", linewidth=2,
+                      vmin=0, vmax=max(float(critical.eff_drop.max()), 1e-12),
+                      legend=True, legend_kwds={"label": "Relative efficiency drop", "shrink": 0.65})
+    ax.set_title(f"Top {len(critical)} critical physical links")
+    ax.set_axis_off()
+    fig.savefig(folder / "critical_links_map.png", bbox_inches="tight", dpi=180)
     plt.close(fig)

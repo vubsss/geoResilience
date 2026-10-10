@@ -14,6 +14,7 @@ from shapely.geometry import Point
 from . import __version__
 from .config import RunConfig
 from .centralities import centrality_report, compute_centralities
+from .criticality import compute_criticality, criticality_report
 from .figures import FIGURE_FILENAMES, write_figures
 from .links import _link_rows
 from .network import cleaning_report, load_and_clean
@@ -70,6 +71,16 @@ def run(config: RunConfig, out_override: Path | None = None, overwrite: bool = F
         row.update(screening.link_metrics[row["link_id"]])
     statistics["redundancy"] = screening.summary
     statistics["runtime_seconds"].update(screening.runtime_seconds)
+    criticality = compute_criticality(
+        graph, links, screening, n_jobs=computation["n_jobs"],
+        budget_bytes=computation["memory_budget_bytes"], directed=config.analysis.directed_removal,
+        undirected_efficiency=statistics["global_efficiency"])
+    for row in links:
+        row.update(criticality.link_metrics[row["link_id"]])
+    statistics["criticality"] = criticality.summary
+    statistics["information"] = criticality.information_summary
+    statistics["runtime_seconds"].update(criticality.runtime_seconds)
+    computation.update(criticality.computation)
     n = len(analysis.node_ids)
     nodes = []
     for i, (node, data) in enumerate(graph.nodes(data=True)):
@@ -78,6 +89,7 @@ def run(config: RunConfig, out_override: Path | None = None, overwrite: bool = F
                       "degree": d, "degree_centrality": d / (n - 1) if n > 1 else 0.0,
                       **{name: float(values[i]) for name, values in node_metrics.items()},
                       **screening.node_metrics[node],
+                      "information": criticality.information[node],
                       "geometry": Point(data["x"], data["y"])})
     crs = graph.graph.get("crs", "EPSG:4326")
     nodes_gdf = gpd.GeoDataFrame(nodes, geometry="geometry", crs=crs)
@@ -113,6 +125,7 @@ def run(config: RunConfig, out_override: Path | None = None, overwrite: bool = F
     lines.extend(f"{key}: {value}" for key, value in histogram.items())
     lines.extend(["", *centrality_report(statistics, links)])
     lines.extend(["", *redundancy_report(screening.summary, links)])
+    lines.extend(["", *criticality_report(criticality.summary, criticality.information_summary)])
     lines = [line.encode("ascii", "backslashreplace").decode() for line in lines]
     lines = [textwrap.fill(line, width=100) if len(line) > 100 else line for line in lines]
     (out_dir / "report.txt").write_text("\n".join(lines) + "\n")

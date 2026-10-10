@@ -4,7 +4,7 @@
 - [x] **02 — All inputs + full cleaning** — completed, tested and manually verified by you.
 - [x] **03 — Exact path-based centralities** — completed, tested and manually verified by you.
 - [x] **04 — Screening and candidates** — completed, tested and manually verified by you.
-- [ ] **05 — Single-link criticality + information centrality** — not started.
+- [x] **05 — Single-link criticality + information centrality** — implemented and automatically tested; awaiting your manual verification.
 - [ ] **06 — Attack vs failure curves** — not started.
 - [ ] **07 — Distribution classification** — not started.
 - [ ] **08 — Failure probabilities** — not started.
@@ -123,7 +123,7 @@ georesilience run --config results/ticket02-graphml/run_config.yaml --out result
 
 Ticket **03** was implemented on **10 October 2026** and is **completed and manually verified
 by you**, as confirmed on **10 October 2026**.
-Tickets 05–16 have not been started. Ticket 04's implementation is documented below.
+Tickets 06–16 have not been started. Tickets 04 and 05 are documented below.
 
 ### Changes
 
@@ -242,9 +242,9 @@ PYTHONPATH= PYTEST_DISABLE_PLUGIN_AUTOLOAD=1 python -m pytest --slow -m slow -s
 
 ## Ticket 04 — Screening and candidates
 
-**Current ticket: 04.** Implemented on **10 October 2026** and **completed, tested and manually
+Ticket **04** was implemented on **10 October 2026** and is **completed, tested and manually
 verified by you**, as confirmed on **10 October 2026**. Tickets 02 and 03 remain completed and manually verified.
-Ticket 05 has not been started.
+Ticket 05's implementation is documented below.
 
 ### Changes
 
@@ -354,3 +354,152 @@ is preserved. All roads are 100 m except the 150 m backup road in the parallel e
   neither was rerun for this ticket. `git diff --check` passed. Verification used the existing
   Python **3.13.3** / OSMnx **2.1.1** environment.
 - You confirmed that you manually checked the outputs on **10 October 2026**. Ticket 04 is complete.
+
+## Ticket 05 — Single-link criticality + information centrality
+
+**Current ticket: 05.** Implemented on **10 October 2026**; automated verification is complete.
+**Your manual verification is pending.** Tickets 02, 03 and 04 remain completed and manually verified.
+Tickets 06–16 have not been started.
+
+### Changes
+
+- Added exact independent closure experiments for every full-recompute candidate and analytic
+  bridge selected in Ticket 04. Closing a physical road removes all of its directed edges.
+- Added reusable `ActiveEdgeGraph` and `AffectedSourceRecompute` machinery for Ticket 11. Arcs
+  are sorted once; each active-mask rebuild takes O(m), retaining the shortest **surviving**
+  parallel edge. Junction isolation keeps original node indices and N.
+- Added the exact affected-source shortcut using reversed endpoint Dijkstra runs and relative
+  tolerance `1e-9`. Only those sources' changed distance rows are recomputed. Tied paths may
+  select additional rows without changing the exact result. Cutoff and reducer APIs are available
+  for later accessibility work.
+- Added automatic float64 baseline caching when the matrix plus workspace fit the memory budget.
+  A temporary memory map shares distances with workers without repeated matrix copies. The code
+  checks temporary disk space and falls back to recomputation when needed. Temporary caches are
+  cleaned on completion/error; cache mode/bytes and remaining workspace are recorded in summary
+  computation metadata. No generated cache path enters the resolved YAML.
+- Added analytic bridge damage from the cross-cut contributions, using forward/reversed paths
+  from the smaller side or cached row/column views. No full modified-network run is needed.
+- Added all seven edge fields: `eff_drop`, `disc_pair_frac`, `extra_km_total`, `affected_pairs`,
+  `extra_m_mean_affected`, `damage_method`, and `crit_rank`. Rankings use descending efficiency
+  loss, then disconnected-pair fraction, then ascending `link_id`.
+- Added exact `information` for candidate nodes by removing every incident edge on the undirected
+  analysis graph and recomputing all-pairs efficiency in chunks. N and its normalization remain
+  unchanged. Source chunks are parallelized without nested per-node workers.
+- Added optional node weights to library efficiency, disconnected-pair and information aggregates.
+  Weighted pairs use `W_i * W_j` and the original distinct-pair weight sum. Only uniform-weight
+  CLI columns are written here; population inputs/exports remain Ticket 12 work.
+- Added criticality/information summary sections, counts by method, top 20 roads, independent
+  closure totals, baseline efficiencies, coverage and stage runtimes. Added ASCII report sections,
+  top-road details and `figures/critical_links_map.png` for up to 50 ranked roads. The new map uses
+  explicit spatial bounds and an adaptive aspect ratio so collinear paths remain visible.
+- Added timestamped link/node counts and estimated remaining time, plus heartbeat logs for long
+  stages. Removal reducers conservatively budget eight float64 blocks per worker. Graph/process
+  overhead and the minimum one-row exception remain additional to the block budget.
+- Added four example inputs/configs and QGIS input GeoPackages. Generated inputs/results are
+  ignored; generator scripts and example YAMLs are source files.
+
+`damage_method=full` names the ticket's full-recompute category; its implementation uses the exact
+affected-source shortcut. `analytic` identifies the separate bridge formula. Self-loops and
+unevaluated roads retain null damage fields/method/rank; non-candidate nodes retain null information.
+An evaluated road can legitimately have zero damage, as the longer parallel road example shows.
+
+### Definitions and efficiency convention
+
+- Link experiments use the **directed** graph by default. `analysis.directed_removal: false`
+  explicitly selects undirected closure experiments; the report/summary state which mode was used.
+  The directed baseline in `metrics.criticality.baseline_efficiency` can differ from Ticket 03's
+  undirected `metrics.global_efficiency`. Information centrality always uses the undirected graph.
+- Both efficiency and information follow the **inverse-distance** convention `mean(1/d)`, in
+  1/metres. Page 2 of [AP2](papers/AP2-centrality_measures_in_urban_networks.pdf) confirms the
+  junction-deactivation operation and relative-loss form, but uses **spatial efficiency**
+  `mean(d_E/d)`, dimensionless. Ticket 05 follows the project's explicit efficiency formula;
+  these information scores are not numerical replications of AP2's spatial-efficiency scores.
+- Original N, weights and distinct-pair denominators are kept after every experiment. Unreachable
+  pairs contribute zero efficiency. Junction deactivation isolates the node instead of deleting it.
+- Extra distance counts only pairs reachable **before and after** the closure; `affected_pairs`
+  counts the ones whose distance increased. Disconnected trips are excluded from both. A bridge
+  therefore has zero extra distance/affected pairs and null `extra_m_mean_affected`.
+- Ordered pairs count both A→B and B→A. These metrics use structural trip pairs rather than traffic
+  demand. Relative losses are undefined/null when baseline efficiency is zero, and have no rank.
+- Summary totals add independent single-road experiments, potentially counting the same trip in
+  several experiments. They do not describe simultaneous closures.
+
+### Manual run and QGIS checks
+
+Run from the repository root in your environment. The existing temporary verification environment
+can be activated while available:
+
+```sh
+source /tmp/georesilience-ticket02-venv/bin/activate
+python examples/create_ticket05_demo.py
+georesilience run --config examples/ticket05-ring.yaml --overwrite
+georesilience run --config examples/ticket05-path.yaml --overwrite
+georesilience run --config examples/ticket05-star.yaml --overwrite
+georesilience run --config examples/ticket05-parallel.yaml --overwrite
+PYTHONPATH= PYTEST_DISABLE_PLUGIN_AUTOLOAD=1 python -m pytest -q
+```
+
+For a fresh environment, follow [README.md](README.md). These fixtures are marked simplified and
+disable consolidation. They use 100 m roads, plus a 150 m backup in the parallel example.
+All nodes and roads are selected; `all: true` still leaves analytic bridges in the analytic set.
+
+| Demo | Expected road/junction values |
+| --- | --- |
+| Ring: 4 nodes / 4 roads | Every road: `eff_drop=2/15 ≈ 0.1333333333`, disconnected fraction 0 |
+| Ring | Extra 0.4 km over 2 ordered pairs, mean 200 m; method `full`; ranks use `link_id` order |
+| Ring nodes | All four have `information=0.5` |
+| Path: 4 nodes / 3 roads | Middle road: `eff_drop=7/13 ≈ 0.5384615385`, disconnected fraction `2/3`, rank 1 |
+| Path | End roads: `eff_drop=11/26`, disconnected fraction 1/2; all roads use `analytic` |
+| Path | Extra distance and affected count 0, mean affected distance empty |
+| Star: 5 nodes / 4 roads | Hub `information=1`; leaves `information=5/14 ≈ 0.3571428571` |
+| Star roads | Each has `eff_drop=5/14`, disconnected fraction 0.4, method `analytic` |
+| Parallel: 2 nodes / 2 roads | Closing 100 m road: `eff_drop=1/3`, disconnected fraction 0, extra 0.1 km |
+| Parallel | That closure affects 2 pairs, mean extra 50 m; closing 150 m road gives zero damage |
+| All examples | Information coverage `all`; no self-loops; every road evaluated |
+
+1. Open `results/ticket05-*/network.gpkg` in QGIS and select both layers. Inspect the seven new
+   `edges` columns and `nodes.information`. Use **Graduated** symbology on `eff_drop` for roads
+   or `information` for nodes. The path's middle road should rank first; the star's hub should
+   have the largest information score.
+2. Read `report.txt` sections **Critical links** and **Information centrality**. Compare the
+   top-road table and `summary.json.metrics.criticality` with the GPKG. Check `counts_by_method`
+   and `metrics.information.coverage`/`candidate_count`. All examples should report uniform weights.
+3. Open `figures/critical_links_map.png`. Ring/star roads have tied losses, so equal colours are
+   expected. The parallel example gives the shorter road higher damage than the curved backup.
+4. Original input layers are in `data/ticket05-demo/*-input.gpkg`. Bidirectional roads have two
+   directed input edges, grouped into one physical output road. Both parallel road geometries
+   remain separate and visible.
+5. To test partial coverage, copy the ring config and set `all: false`, `k_betweenness: 1`,
+   `k_detour: 0`, `exact_info_max_nodes: 0`, and `k_nodes: 1` under `criticality`. Run using
+   `--out results/ticket05-candidates`. Expect one scored road, one scored junction, and
+   `coverage: candidates`; all other scores are empty.
+6. To compare cache paths, copy a demo config and set `analysis.max_memory_gb: 0.0000001`.
+   Run into a different folder. Expect `summary.json.computation.criticality_baseline: recomputed`
+   and matching metric values. This intentionally tiny budget invokes the minimum-row exception;
+   it is a correctness check rather than a recommended resource setting.
+7. To compare analytic and full handling, copy the path YAML and set
+   `criticality.bridge_analytic_max_side: 0`. Run to another folder. All three methods become
+   `full`, with the same damage values. Resolved `run_config.yaml` files remain reusable.
+
+### Verification results
+
+- Hand answers passed: the four-road ring, middle path bridge, star hub/leaf information and
+  shorter-versus-longer parallel-road closures. Both analytic and full path methods agree.
+- Two **200-node directed random spatial fixtures** with one-way streets, bridges and parallel
+  roads matched independent full all-source recomputations for **every physical road**, within
+  **1e-9**. Analytic bridge damage matched those full recomputations too.
+- Every junction's information centrality on both fixtures matched an independent brute-force
+  NetworkX efficiency recomputation within **1e-9**.
+- Cached/recomputed baseline paths, forced tiny chunks and one/two workers agreed within
+  **1e-12**. Weighted hand answers, weighted analytic-versus-full paths, undirected-removal mode,
+  invalid weights, zero-mass normalization and singleton undefined information were checked.
+- Partial candidate nulls/coverage, GPKG columns, JSON without nonfinite values, report formatting,
+  progress/ETA, figure creation/overwrite cleanup and temporary cache cleanup were checked.
+- All four example CLI runs completed; their saved layers were checked against the table above.
+- Final regular suite: **55 passed, 4 skipped** in **202.92 s**; this includes **8 Ticket 05 tests**.
+  The skipped tests are the three opt-in live-network tests and the Ticket 03 slow benchmark;
+  neither was rerun for this ticket. `git diff --check` passed. Verification used Python
+  **3.13.3**, SciPy **1.18.1** and OSMnx **2.1.1** in the existing temporary environment.
+  After the visual check prompted the collinear-map bounds fix, both affected output/figure
+  regression tests passed again, and all four demo figure sets were regenerated.
+  Your manual verification is pending.
