@@ -1,7 +1,7 @@
 # GeoResilience
 
-GeoResilience analyzes road network structure and resilience. Tickets 01–03 provide input,
-cleaning, physical road links, exact centrality metrics, and auditable outputs. Later analysis tickets are
+GeoResilience analyzes road network structure and resilience. Tickets 01–04 provide input,
+cleaning, physical road links, exact centrality metrics, redundancy screening, and auditable outputs. Later analysis tickets are
 tracked in [TICKET_UPDATES.md](TICKET_UPDATES.md).
 
 Install with Python 3.10 or newer:
@@ -74,6 +74,13 @@ analysis:
   max_memory_gb: auto
   directed_centrality: false
   directed_removal: true
+criticality:
+  k_betweenness: 250
+  k_detour: 250
+  k_nodes: 300
+  exact_info_max_nodes: 5000
+  bridge_analytic_max_side: 2000
+  all: false
 output:
   dir: results/
   figures: true
@@ -147,9 +154,9 @@ Non-empty output folders require `--overwrite`. The command writes:
 
 | File | Contents |
 | --- | --- |
-| `network.gpkg` | Projected `nodes` and physical-link `edges` layers; degree and centrality metrics |
+| `network.gpkg` | Projected `nodes` and physical-link `edges` layers; degree, centrality and redundancy metrics |
 | `summary.json` | Input, CRS, download time, applied type, boundary, cleaning counts and metrics |
-| `report.txt` | ASCII network summary, cleaning table, component losses, warnings, degree histogram |
+| `report.txt` | ASCII network summary, cleaning, degree, centralities, redundancy and top-road tables |
 | `run_config.yaml` | Resolved defaults and package versions; reusable as a run config |
 | `figures/degree_hist.png` | Degree histogram, unless `output.figures: false` |
 
@@ -310,3 +317,102 @@ It measures centrality computation and the combined parent/worker peak RSS, asse
 10 minutes and at most budget + 1 GiB. Input-fixture generation is outside the timed interval;
 file export and plotting are tested separately. Runtime is hardware-dependent. Live source tests
 remain opt-in with `--network`.
+
+## Redundancy and candidates (ticket 04)
+
+Every run now screens the cleaned network for road and junction failures. An **undirected bridge**
+is a physical road whose removal disconnects the network even when travel directions are ignored.
+Parallel physical roads remain separate alternatives. A **directed bridge** has an undirected
+alternative but loses at least one required endpoint-to-endpoint travel direction after closure.
+This can happen because the alternative route contains one-way roads.
+
+For each non-loop physical road, detour screening removes all its directed edges, searches the
+remaining directed multigraph, and divides the alternative route length by the road's original
+length. Two-way roads use the worse of the two directions; one-way roads use their existing
+direction. Known undirected bridges have no alternative and need no search. Other searches use
+masked graph views and bidirectional Dijkstra, with joblib workers controlled by `analysis.n_jobs`.
+Each worker receives the graph once and processes batches of links. Graph and process memory are
+additional to the shortest-path block budget documented above.
+
+| Output field | Meaning |
+| --- | --- |
+| edges: `is_bridge` | Removing this physical road disconnects the undirected network |
+| edges: `cut_side_nodes`, `cut_side_frac` | Smaller bridge side's node count and count / N; zero for non-bridges |
+| edges: `detour_ratio` | Alternative directed length / original length; null when no alternative exists |
+| edges: `detour_none` | True when a required alternative route does not exist |
+| edges: `is_directed_bridge` | No directed alternative, despite not being an undirected bridge |
+| edges: `candidate_reason` | Semicolon-separated selection reasons, possibly empty |
+| edges: `is_criticality_candidate` | Selected for full link-failure recomputation in later tickets |
+| edges: `is_analytic_bridge` | Selected for analytic bridge handling instead of full recomputation |
+| nodes: `is_articulation` | Removing this junction disconnects the undirected network |
+| nodes: `artic_max_cut` | Surviving nodes outside the largest component after removing the junction |
+| nodes: `is_info_candidate` | Selected for later information-centrality recomputation |
+
+These cut counts measure **graph nodes**, not population. For example, removing a four-leaf star's
+hub leaves four isolated nodes: one is the largest remaining component, so `artic_max_cut=3`.
+Self-loops are excluded: numeric edge screening values are null, flags are false and reasons empty.
+Their null detour does not mean an unsuccessful search (`detour_none=false`). A finite detour ratio
+can be below 1 if the road being closed is longer than another available road.
+
+Candidate selection uses the `criticality` defaults shown above:
+
+- Bridges with smaller-side count at most `bridge_analytic_max_side` receive `analytic_bridge`.
+  Larger bridges receive `large_bridge` and enter the full-recompute set.
+- Non-bridge links enter the full-recompute set if selected by the top `k_betweenness` edge scores,
+  the top `k_detour` detour ratios, or `directed_bridge`. Missing alternatives rank first for
+  detours; equal detours use descending edge betweenness. Final ties use ascending `link_id`.
+- All nodes are candidates when `N <= exact_info_max_nodes`. Otherwise select the top `k_nodes`
+  node betweenness scores plus the top 50 articulations by severity. Node ties use cleaned graph
+  node order. Counts can overlap, so union sizes need not equal sums of selection counts.
+- `all: true` selects all nodes and all non-loop links except analytic bridges for full
+  recomputation. Ranking reasons are retained; a road included only by `all` can have an empty
+  reason. Use the explicit candidate flags to identify membership.
+
+`summary.json.metrics.redundancy` contains bridge count/fraction and physical-length fraction,
+finite detour median/p90/p99, no-alternative and directed-bridge counts, articulation count/fraction,
+candidate-set sizes and overlapping counts by reason. If no finite detours exist, their quantiles
+are JSON null. Screening runtimes join `metrics.runtime_seconds`. The report adds a **Redundancy**
+section and top 20 bridges by cut-side size and non-bridges by detour, with names and OSM way IDs.
+`figures/redundancy_map.png` shows bridges in red, directed bridges in orange and other links in grey.
+Candidate selection prepares tickets 05 and 11; damage and information-centrality scores are not
+computed yet. The efficiency convention documented for ticket 03 remains unchanged.
+
+### Run and inspect ticket 04
+
+From the repository root in your activated environment:
+
+```sh
+python examples/create_ticket04_demo.py
+georesilience run --config examples/ticket04-path.yaml --overwrite
+georesilience run --config examples/ticket04-ring.yaml --overwrite
+georesilience run --config examples/ticket04-directed-ring.yaml --overwrite
+georesilience run --config examples/ticket04-parallel.yaml --overwrite
+PYTHONPATH= PYTEST_DISABLE_PLUGIN_AUTOLOAD=1 python -m pytest -q
+```
+
+| Demo | Expected screening result |
+| --- | --- |
+| Path: 6 nodes, 5 roads of 100 m | All bridges; cut-side sizes along the path **1, 2, 3, 2, 1**; all lack alternatives |
+| Path candidates | Threshold 2 gives **4 analytic bridges**, **1 full-recompute link** (middle bridge), all 6 nodes |
+| Two-way ring: 6 nodes, 6 roads of 100 m | No bridges/articulations; every detour **5** (500 m alternative) |
+| Ring candidates | With both top-k limits 2 and tied scores, **2 full-recompute links**, all 6 nodes |
+| Directed ring: same ring, only 0→1 on segment 0–1 | **0 undirected bridges, 5 directed bridges**; segment 0–1 has detour **5** |
+| Parallel roads: 2 nodes, roads of 100 and 150 m | No bridges; detours **1.5** and **2/3**, respectively |
+
+In the directed ring, closing any of the other five two-way roads leaves an alternative that
+requires the missing **1→0** direction. Closing the one-way road itself still allows **0→1** via
+the other five roads. Thus the orange roads are the other five segments.
+
+Open each `results/ticket04-*/network.gpkg` in QGIS, select both layers and inspect their attribute
+tables. Use **Categorized** symbology on `is_bridge` or `is_directed_bridge`, or open the redundancy
+PNG directly. For path cut sizes, sort roads spatially along the path or use their endpoint columns.
+Check `candidate_reason`, both edge candidate flags, and `is_info_candidate` against the table.
+The input GeoPackages under `data/ticket04-demo/*-input.gpkg` open directly in QGIS; their edges
+represent directed travel edges, so bidirectional roads appear twice at the same location.
+The curved 150 m backup road is drawn separately from the straight 100 m parallel road.
+
+To test `all: true`, copy the ring config, set both top-k limits to 0 and add `all: true` under
+`criticality`, then run into a new folder. Expect all 6 roads and nodes selected, with empty road
+reasons. Set `exact_info_max_nodes: 0`, `k_nodes: 2`, `all: false` to exercise node screening on the
+ring: exactly 2 nodes are selected because there are no articulations. The generated examples
+disable consolidation and declare GraphML simplified to preserve their known graph topology.

@@ -1,0 +1,14 @@
+input:
+  source: graphml
+  path: data/ticket04-demo/ring.graphml
+cleaning:
+  consolidate: false
+analysis:
+  n_jobs: 1
+  max_memory_gb: 0.1
+criticality:
+  k_betweenness: 2
+  k_detour: 2
+output:
+  dir: results/ticket04-ring
+  figures: true

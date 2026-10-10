@@ -3,7 +3,7 @@
 - [x] **01 — Tracer bullet: config → graph → degree → outputs** — implemented. See [ticket](plan/tickets/01-tracer-bullet.md).
 - [x] **02 — All inputs + full cleaning** — completed, tested and manually verified by you.
 - [x] **03 — Exact path-based centralities** — completed, tested and manually verified by you.
-- [ ] **04 — Screening and candidates** — not started.
+- [x] **04 — Screening and candidates** — completed, tested and manually verified by you.
 - [ ] **05 — Single-link criticality + information centrality** — not started.
 - [ ] **06 — Attack vs failure curves** — not started.
 - [ ] **07 — Distribution classification** — not started.
@@ -123,7 +123,7 @@ georesilience run --config results/ticket02-graphml/run_config.yaml --out result
 
 Ticket **03** was implemented on **10 October 2026** and is **completed and manually verified
 by you**, as confirmed on **10 October 2026**.
-Tickets 04–16 have not been started.
+Tickets 05–16 have not been started. Ticket 04's implementation is documented below.
 
 ### Changes
 
@@ -239,3 +239,118 @@ The benchmark is skipped by default. To reproduce it (allow several minutes):
 ```sh
 PYTHONPATH= PYTEST_DISABLE_PLUGIN_AUTOLOAD=1 python -m pytest --slow -m slow -s
 ```
+
+## Ticket 04 — Screening and candidates
+
+**Current ticket: 04.** Implemented on **10 October 2026** and **completed, tested and manually
+verified by you**, as confirmed on **10 October 2026**. Tickets 02 and 03 remain completed and manually verified.
+Ticket 05 has not been started.
+
+### Changes
+
+- Added validated `criticality` settings with all six ticket defaults; counts and thresholds must
+  be nonnegative. Resolved configs include these settings and remain reusable.
+- Added physical bridge detection that preserves parallel roads. Contracted the non-bridge
+  components into a weighted bridge tree to compute exact smaller-side node counts in one traversal.
+- Added articulation flags and exact severity from a weighted block-cut tree. Here `artic_max_cut`
+  means **surviving nodes outside the largest remaining component** after junction removal. It
+  excludes the removed junction and measures nodes, not population. A four-leaf star's hub has
+  severity 3; a six-node path's severities are `0, 1, 2, 2, 1, 0`.
+- Preserved each physical link's original directed edge identities internally. Directed detours
+  mask all edges of that link and retain slower parallel alternatives. Two-way links use the worse
+  direction; one-way links use their existing direction. Known bridges directly receive infinite
+  detours; other links use bidirectional Dijkstra on filtered graph views.
+- Parallelized detour batches with joblib, sharing each minimal directed graph once per worker.
+  `analysis.n_jobs` controls workers, capped by the number of links needing searches. Graph/process
+  overhead is additional to the shortest-path block memory budget.
+- Added deterministic full-recompute link, analytic bridge, and node candidate sets for future
+  tickets 05/11. Detour ties use edge betweenness then `link_id`; node ties use graph node order.
+  Selection counts overlap and do not sum to the union size.
+- Exported all requested edge/node fields, plus explicit `is_criticality_candidate` and
+  `is_analytic_bridge` flags. These distinguish membership under `all: true`, where a road included
+  only by that setting can have an empty `candidate_reason`. Analytic bridges remain excluded from
+  full recomputation even in this mode.
+- Exported absent alternatives as null `detour_ratio` plus `detour_none=true`. Self-loops receive
+  null numeric screening values, false flags and empty reasons, and are excluded from summaries.
+- Added `summary.json.metrics.redundancy`, screening stage runtimes, report statistics/top-road
+  tables, and `figures/redundancy_map.png` (red bridges, orange directed bridges, grey other roads).
+  Figure cleanup on overwrite covers the new map too. Empty finite-detour statistics use JSON null.
+- Added four reproducible examples with GraphML and input GeoPackages for QGIS; generated inputs
+  and results are ignored, while scripts and YAML configs are tracked as source.
+
+The **efficiency convention remains unchanged**: Ticket 03 uses inverse-distance efficiency
+`mean(1/d)` in 1/metres, while AP2 uses spatial efficiency `mean(d_E/d)`, dimensionless.
+Ticket 04 computes neither damage nor information centrality; it selects candidates for those
+later calculations. The existing convention note above still applies to tickets 05 and 11.
+
+### Manual run and QGIS checks
+
+From the repository root, activate your environment. While the temporary verification environment
+is available, you can use:
+
+```sh
+source /tmp/georesilience-ticket02-venv/bin/activate
+python examples/create_ticket04_demo.py
+georesilience run --config examples/ticket04-path.yaml --overwrite
+georesilience run --config examples/ticket04-ring.yaml --overwrite
+georesilience run --config examples/ticket04-directed-ring.yaml --overwrite
+georesilience run --config examples/ticket04-parallel.yaml --overwrite
+PYTHONPATH= PYTEST_DISABLE_PLUGIN_AUTOLOAD=1 python -m pytest -q
+```
+
+For a fresh environment, follow the install commands in [README.md](README.md).
+The demo graphs are declared simplified, with consolidation disabled, so their known topology
+is preserved. All roads are 100 m except the 150 m backup road in the parallel example.
+
+| Demo | Expected values |
+| --- | --- |
+| Path | 6 nodes / 5 bridges; cut-side counts along the path `1, 2, 3, 2, 1`; fractions counts / 6 |
+| Path | All detours null with `detour_none=true`; bridge fraction and bridge length fraction both 1 |
+| Path candidates | Threshold 2: 4 `analytic_bridge` roads and 1 `large_bridge` full-recompute road |
+| Two-way ring | 6 nodes / 6 roads; no bridges or articulations; every detour 5; median/p90/p99 all 5 |
+| Ring candidates | Top-k limits 2: 2 full-recompute roads, with both `betweenness;detour` reasons |
+| Directed ring | No undirected bridges; 5 directed bridges; their detours null and `detour_none=true` |
+| Directed ring | One-way road 0→1 has finite detour 5; with the example's top-k settings, 6 candidate roads |
+| Parallel | 2 nodes / 2 physical roads, neither a bridge; detours 1.5 (100 m road) and 2/3 (150 m road) |
+| All examples | All nodes have `is_info_candidate=true` under the default 5000-node threshold |
+
+1. Read each `results/ticket04-*/report.txt` and `summary.json.metrics.redundancy`. Check the
+   Redundancy section, candidate counts, and both top-20 road tables against the expected values.
+2. Open the corresponding `network.gpkg` in QGIS and select both layers. In `edges`, inspect
+   `is_bridge`, `cut_side_nodes`, `cut_side_frac`, `detour_ratio`, `detour_none`, `is_directed_bridge`,
+   `candidate_reason`, `is_criticality_candidate`, and `is_analytic_bridge`.
+   In `nodes`, inspect `is_articulation`, `artic_max_cut`, and `is_info_candidate`.
+3. Open `figures/redundancy_map.png`: the path is red, the two-way ring and parallel roads grey,
+   and five directed-ring segments orange. The remaining directed-ring segment is grey.
+4. The original input copies `data/ticket04-demo/*-input.gpkg` open directly in QGIS. Each two-way
+   physical road has two coincident directed input edges; the output combines them into one road.
+   The 150 m backup road is curved so you can see it separately from the straight 100 m road.
+5. Understand the directed-ring result: its one-way segment permits 0→1 but lacks 1→0. Closing
+   any other road forces an alternative through that missing direction, so those five roads are
+   directed bridges. Closing the one-way road still leaves 0→1 reachable around the other side.
+6. To test complete selection, copy the ring YAML and set `criticality.k_betweenness: 0`,
+   `criticality.k_detour: 0`, and `criticality.all: true`. Run to a new output directory using
+   `--out results/ticket04-all`. Expect 6 road candidates and 6 node candidates, even though
+   road reasons are empty. On the path, analytic bridges stay excluded from full recomputation.
+7. To test node screening, use a ring config with `exact_info_max_nodes: 0`, `k_nodes: 2`,
+   and `all: false`. Expect 2 node candidates. To rerun resolved settings, pass a run's
+   `run_config.yaml` with `--out` pointing to a different directory.
+
+### Verification results
+
+- Tree and star bridge cuts/articulation severity, six-link ring detours, both one-way orientations,
+  parallel alternatives, self-loop exclusions, selection thresholds, ties and `all` mode passed.
+- Five **205-node random spatial graphs** (200 spatial nodes plus a five-node branch) matched
+  independent copy-and-remove component counts and directed NetworkX Dijkstra detours. These
+  fixtures include one-way edges, parallel roads, bridges and articulations. Finite ratios agreed
+  within **1e-12**; no-alternative and directed-bridge flags matched exactly.
+- Node removal severity matched brute force. A separate 80-node path verified the top-50
+  articulation union with node-betweenness candidates. Serial and two-worker results agreed,
+  including repeated worker-pool runs on different graphs.
+- GeoPackage fields/nulls/flags, JSON without nonfinite values, resolved config round-tripping,
+  ASCII report sections/tables, and the new PNG passed. All four example CLI runs succeeded.
+- Ticket 04 tests: **11 passed**. Full regular suite: **47 passed, 4 skipped** in **167.08 s**.
+  The skipped tests are the three opt-in live-network tests and the Ticket 03 slow benchmark;
+  neither was rerun for this ticket. `git diff --check` passed. Verification used the existing
+  Python **3.13.3** / OSMnx **2.1.1** environment.
+- You confirmed that you manually checked the outputs on **10 October 2026**. Ticket 04 is complete.

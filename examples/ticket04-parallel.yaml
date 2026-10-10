@@ -1,0 +1,11 @@
+input:
+  source: graphml
+  path: data/ticket04-demo/parallel.graphml
+cleaning:
+  consolidate: false
+analysis:
+  n_jobs: 1
+  max_memory_gb: 0.1
+output:
+  dir: results/ticket04-parallel
+  figures: true

@@ -53,11 +53,21 @@ class OutputConfig(StrictModel):
     figures: bool = True
 
 
+class CriticalityConfig(StrictModel):
+    k_betweenness: int = Field(default=250, ge=0)
+    k_detour: int = Field(default=250, ge=0)
+    k_nodes: int = Field(default=300, ge=0)
+    exact_info_max_nodes: int = Field(default=5000, ge=0)
+    bridge_analytic_max_side: int = Field(default=2000, ge=0)
+    all: bool = False
+
+
 class RunConfig(StrictModel):
     input: InputConfig
     network: NetworkConfig = Field(default_factory=NetworkConfig)
     cleaning: CleaningConfig = Field(default_factory=CleaningConfig)
     analysis: AnalysisConfig = Field(default_factory=AnalysisConfig)
+    criticality: CriticalityConfig = Field(default_factory=CriticalityConfig)
     output: OutputConfig = Field(default_factory=OutputConfig)
 
 

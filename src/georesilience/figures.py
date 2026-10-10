@@ -1,10 +1,10 @@
-"""Exported figures for degree and exact centralities."""
+"""Exported figures for degree, exact centralities, and redundancy."""
 
 import numpy as np
 
 NODE_MEASURES = ("closeness", "straightness", "betweenness")
 FIGURE_FILENAMES = ("degree_hist.png", *(f"{name}_ccdf.png" for name in NODE_MEASURES),
-                    "edge_betweenness_map.png")
+                    "edge_betweenness_map.png", "redundancy_map.png")
 
 
 def write_figures(nodes, links, folder):
@@ -46,4 +46,20 @@ def write_figures(nodes, links, folder):
     ax.set_title("Physical links by edge betweenness")
     ax.set_axis_off()
     fig.savefig(folder / "edge_betweenness_map.png", bbox_inches="tight", dpi=180)
+    plt.close(fig)
+
+    from matplotlib.lines import Line2D
+
+    fig, ax = plt.subplots(figsize=(8, 8))
+    links.plot(ax=ax, color="grey", linewidth=0.8)
+    for column, color in (("is_bridge", "red"), ("is_directed_bridge", "orange")):
+        selected = links[links[column]]
+        if not selected.empty:
+            selected.plot(ax=ax, color=color, linewidth=1.8)
+    ax.legend(handles=[Line2D([0], [0], color=color, label=label, linewidth=2)
+                       for color, label in (("red", "Bridge"), ("orange", "Directed bridge"),
+                                            ("grey", "Other link"))])
+    ax.set_title("Physical links by redundancy")
+    ax.set_axis_off()
+    fig.savefig(folder / "redundancy_map.png", bbox_inches="tight", dpi=180)
     plt.close(fig)

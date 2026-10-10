@@ -36,6 +36,7 @@ def _link_rows(graph):
                                    (graph.nodes[v]["x"], graph.nodes[v]["y"])])
         rows.append({
             "link_id": link_id, "u": str(u), "v": str(v), "_u": u, "_v": v,
+            "_edges": tuple((a, b, key) for a, b, key, _ in edges),
             "osm_way_ids": ",".join(map(str, _way_ids(
                 [way for _, _, _, edge in edges for way in _way_ids(edge.get("osmid"))]
             ))),

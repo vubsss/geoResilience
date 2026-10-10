@@ -17,6 +17,7 @@ from .centralities import centrality_report, compute_centralities
 from .figures import FIGURE_FILENAMES, write_figures
 from .links import _link_rows
 from .network import cleaning_report, load_and_clean
+from .screening import redundancy_report, screen_network
 
 
 def _versions():
@@ -62,6 +63,13 @@ def run(config: RunConfig, out_override: Path | None = None, overwrite: bool = F
     degree = dict(zip(analysis.node_ids, map(int, analysis.csr.indptr[1:] - analysis.csr.indptr[:-1])))
     for row in links:
         row["edge_betweenness"] = edge_scores[row["link_id"]]
+    screening = screen_network(
+        graph, links, dict(zip(analysis.node_ids, node_metrics["betweenness"])),
+        config.criticality, computation["n_jobs"])
+    for row in links:
+        row.update(screening.link_metrics[row["link_id"]])
+    statistics["redundancy"] = screening.summary
+    statistics["runtime_seconds"].update(screening.runtime_seconds)
     n = len(analysis.node_ids)
     nodes = []
     for i, (node, data) in enumerate(graph.nodes(data=True)):
@@ -69,6 +77,7 @@ def run(config: RunConfig, out_override: Path | None = None, overwrite: bool = F
         nodes.append({"node_id": str(node), "x": data["x"], "y": data["y"],
                       "degree": d, "degree_centrality": d / (n - 1) if n > 1 else 0.0,
                       **{name: float(values[i]) for name, values in node_metrics.items()},
+                      **screening.node_metrics[node],
                       "geometry": Point(data["x"], data["y"])})
     crs = graph.graph.get("crs", "EPSG:4326")
     nodes_gdf = gpd.GeoDataFrame(nodes, geometry="geometry", crs=crs)
@@ -103,6 +112,7 @@ def run(config: RunConfig, out_override: Path | None = None, overwrite: bool = F
              "", *cleaning_report(cleaning), "", "Degree", "degree: count"]
     lines.extend(f"{key}: {value}" for key, value in histogram.items())
     lines.extend(["", *centrality_report(statistics, links)])
+    lines.extend(["", *redundancy_report(screening.summary, links)])
     lines = [line.encode("ascii", "backslashreplace").decode() for line in lines]
     lines = [textwrap.fill(line, width=100) if len(line) > 100 else line for line in lines]
     (out_dir / "report.txt").write_text("\n".join(lines) + "\n")
