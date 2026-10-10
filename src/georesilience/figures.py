@@ -2,10 +2,12 @@
 
 import numpy as np
 
+from .classification import CLASSIFICATION_FIGURES
+
 NODE_MEASURES = ("closeness", "straightness", "betweenness")
 FIGURE_FILENAMES = ("degree_hist.png", *(f"{name}_ccdf.png" for name in NODE_MEASURES),
                     "edge_betweenness_map.png", "redundancy_map.png", "critical_links_map.png",
-                    "robustness_scc.png", "robustness_efficiency.png")
+                    "robustness_scc.png", "robustness_efficiency.png", *CLASSIFICATION_FIGURES)
 
 
 def _critical_map_canvas(links):

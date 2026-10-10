@@ -6,7 +6,7 @@
 - [x] **04 — Screening and candidates** — completed, tested and manually verified by you.
 - [x] **05 — Single-link criticality + information centrality** — completed, tested and manually verified by you.
 - [x] **06 — Attack vs failure curves** — completed, tested and manually verified by you, including ER and scale-free examples.
-- [ ] **07 — Distribution classification** — not started.
+- [x] **07 — Distribution classification** — completed, tested and manually verified by you, including five ER + five scale-free cases; inconclusive-label interpretation documented.
 - [ ] **08 — Failure probabilities** — not started.
 - [ ] **09 — Connectivity reliability** — not started.
 - [ ] **10 — Travel-time reliability** — not started.
@@ -123,7 +123,7 @@ georesilience run --config results/ticket02-graphml/run_config.yaml --out result
 
 Ticket **03** was implemented on **10 October 2026** and is **completed and manually verified
 by you**, as confirmed on **10 October 2026**.
-Tickets 07–16 have not been started. Tickets 04–06 are documented below.
+Tickets 08–16 have not been started. Tickets 04–07 are documented below.
 
 ### Changes
 
@@ -359,7 +359,7 @@ is preserved. All roads are 100 m except the 150 m backup road in the parallel e
 
 Ticket **05** was implemented on **10 October 2026** and is **completed, tested and manually verified
 by you**, as confirmed on **10 October 2026**. Tickets 02, 03 and 04 remain completed and manually verified.
-Ticket 06's implementation is documented below; tickets 07–16 have not been started.
+Tickets 06–07 are documented below; tickets 08–16 have not been started.
 
 ### Changes
 
@@ -509,7 +509,7 @@ All nodes and roads are selected; `all: true` still leaves analytic bridges in t
 Ticket **06** was implemented on **10 October 2026** and is **completed, tested and manually
 verified by you**, as confirmed on **10 October 2026**, including the ER and scale-free examples.
 Your confirmation of Ticket 05's results has been recorded above.
-Tickets 07–16 have not been started.
+Ticket 07 is documented below; tickets 08–16 have not been started.
 
 ### Changes
 
@@ -678,3 +678,246 @@ strategy and metric; these finite examples do not establish universal model supe
   and both 500-node input examples were regenerated with unchanged topology. Both result CSVs
   were independently checked for row counts, baseline values and monotonicity. `git diff --check` passed.
   You confirmed that you manually checked the results on **10 October 2026**. Ticket 06 is complete.
+
+## Current ticket: 07 — Distribution classification
+
+Ticket **07** was implemented on **10 October 2026** and is **completed and manually verified
+by you**, as confirmed on **11 October 2026**. Verification includes the requested
+**five ER + five scale-free graph benchmark** and review of its inconclusive labels.
+Tickets 08–16 have not been started.
+
+### Changes
+
+- Added `src/georesilience/classification.py` with independent fitting, ordered verdict rules,
+  network-label logic, report generation and classification plots. The classifier consumes the
+  existing degree, centrality and robustness results without recomputing shortest paths.
+- Fit degree, closeness, straightness, betweenness and computed information values. Only positive
+  finite observations enter fits; zeros, nonfinite values and negatives are counted separately.
+  Fewer than 50 positives, fewer than three distinct values, failed fits or nonfinite likelihood
+  comparisons give inconclusive evidence with a reason. Undefined results are JSON null.
+- Added package-selected power-law `xmin`, exact discrete fitting for degree, normalized likelihood
+  comparisons against exponential/lognormal tails, and fixed-zero-location exponential/half-normal
+  body MLEs. Applied the ticket's ordered p-value, AIC and minimum-tail thresholds. Recorded
+  alpha, xmin, n_tail, likelihood ratios/p-values, body scales/AICs, tail KS, reasons and warnings.
+- Used full-information verdicts for network labels. Candidate-only information is explicitly
+  excluded and the ticket's betweenness fallback is used. Degree, closeness, straightness and the
+  robustness gap do not influence the production label. Added secondary betweenness consistency.
+- Added the node failure-minus-attack connectivity AUC gap as supporting evidence, with a sentence
+  interpreting its sign and no invented threshold for a large gap. Missing node curves give null.
+- Added root-level `summary.json.classification`, a **Network class** report section and ten
+  figures: `classification_<distribution>_loglog.png` and `classification_<distribution>_logy.png`.
+  Empirical CCDFs are normalized over positives; tail overlays are scaled by the observed tail
+  fraction. Existing Ticket 03 figures are preserved. Overwrite removes stale classification
+  figures and `output.figures: false` suppresses them. Added fitting runtime and powerlaw version.
+- Added **independent degree evidence**, using common-support discrete Poisson and bounded
+  power-law references, plus agreement with the centrality label. This diagnostic is additional
+  research evidence and never changes the ticket's network label.
+- Added `examples/run_ticket07_benchmark.py`, reusing the Ticket 06 input generator. It generates
+  ten inputs/configs, runs their analyses and writes comparison CSV/JSON/report files with counts
+  of agreement, disagreement and inconclusive cases. It supports generation-only, aggregation-only,
+  custom sizes/seeds/jobs, figure selection and controlled overwrite. Generated Ticket 07 inputs
+  and configs are gitignored; the script is source.
+- Added `tests/test_classification.py`: known-distribution tests, independent body-MLE/AIC checks,
+  rule-boundary/priority tests, label/fallback/consistency branches, exclusions, unit invariance,
+  degree-model likelihood checks, numerical failure handling, complete output/figure checks and
+  a small ER/BA benchmark integration test. The full ten-graph study is run explicitly rather
+  than repeated by every pytest invocation. Updated README with behavior and manual commands.
+
+### Numerical and scientific conventions
+
+**Fit conditioning:** continuous observations are fitted in median units, restoring scales and
+xmin to original units afterward. Likelihood ratios and AIC differences are invariant to this
+change of units. Degree stays integer-valued and is never rescaled. Powerlaw 2.0 defaults to an
+alpha upper bound of 3; the implementation explicitly permits **alpha > 1 without an upper cap**.
+This matters: several light tails and the BA information fits have estimates above 3. Degree
+uses `estimate_discrete=False`. Numerical warnings are retained in each distribution's JSON.
+
+**Relative evidence:** likelihood-ratio p-values compare alternatives, not absolute fit quality.
+The Gaussian verdict is the ticket's name for a **half-normal** reference with location zero.
+For example, the known uniform control receives this verdict because half-normal fits better
+than exponential under the prescribed rules; this does not establish a Gaussian data generator.
+No bootstrap goodness-of-fit test was added. Centrality values on a graph are dependent, so
+nominal p-values are diagnostic. The report explicitly states these limits.
+
+**Labels and consistency:** JSON uses `scale-free`, `exponential` or `inconclusive`. Fallback
+labels carry `label_basis: betweenness_fallback` and are described as inferred in the report.
+For full information, opposing recognized exponential/Gaussian betweenness patterns are
+inconsistent; an inconclusive or power-law betweenness verdict gives `n/a`. Full-information
+inconclusiveness does not trigger fallback. Distribution `reason` carries the insufficient-sample
+explanation separately from the machine-readable `verdict: inconclusive`.
+
+**Independent degree comparison:** both references use the same positive degree observations,
+conditioned on common support `observed minimum ... N-1`. Both have one estimated parameter.
+`delta_aic = AIC_Poisson - AIC_power_law`; >10 gives `power_law_like`, <-10 gives `poisson_like`,
+otherwise inconclusive. Power-law optimization uses exponent bounds 0–20 and returns inconclusive
+if the upper boundary is reached. Poisson is a sparse-ER reference, not an exact model of ER
+conditioned on connectedness. These are relative two-model comparisons; no AIC from the body
+is compared with an AIC fitted to a different tail subset. The ticket's own degree-tail verdict
+is also retained as a separate field.
+
+**Paper context:** [AP2](papers/AP2-centrality_measures_in_urban_networks.pdf) distinguishes city
+samples using information centrality and discusses geographic constraints on primal junction
+degree. [AP1](papers/AP1-error_and_attack_tolerance_of_complex_networks.pdf) supplies the degree-based
+ER/scale-free model comparison. ER/BA generator families do not automatically describe planned
+or self-organized cities. Their agreement with Ticket 07 is a research observation.
+Efficiency remains **mean(1/d)**, differing from AP2's spatial **mean(d_E/d)**. The fitted alpha is
+a density exponent; the ideal continuous power-law CCDF exponent is alpha minus one. It should
+not be directly equated with AP2's plotted CCDF exponents.
+
+### Ten-graph benchmark design
+
+- **Models:** five ER `G(500, 6/499)` graphs sampled until connected, and five BA graphs with
+  `n=500, m=3`; seeds **42, 43, 44, 45, 46**, with separate spawned topology streams per model.
+- **Roads:** bidirectional, equal 1,000 m analysis length; schematic EPSG:32644 spring layouts.
+  Crossing lines are junctions only where graph nodes are shared. Consolidation is disabled.
+- **Coverage:** every node receives information centrality (`exact_info_max_nodes: 500`). Earlier
+  road-candidate limits stay at 25 each; no candidate-only information is used for the comparison.
+- **Supporting robustness:** node removals only, 20 steps, `f_max=0.20`, adaptive degree attacks,
+  ten random failures, all 500 efficiency sources. All ten cases share these settings. This
+  deliberately avoids link-attack work that is unused by Ticket 07's supporting-evidence rule.
+- **Efficiency:** graphs run sequentially, each using two analysis workers and a 0.25 GiB block
+  budget. First-seed ER/BA cases render all figures; other cases keep full numeric outputs.
+  The complete ten-case experiment finished in about **four minutes** on this machine. Fitting
+  the five distributions took approximately **one second per graph**; full information took
+  about **11 seconds per graph**. These times depend on hardware and concurrent workloads.
+
+### Run and manually verify
+
+From the repository root with your Python environment activated. The existing environment is
+`/tmp/georesilience-ticket02-venv`; otherwise follow the README installation steps.
+
+```sh
+python examples/run_ticket07_benchmark.py --overwrite
+PYTHONPATH= PYTEST_DISABLE_PLUGIN_AUTOLOAD=1 python -m pytest -q tests/test_classification.py
+```
+
+1. Start with `results/ticket07-benchmark/report.txt` and `comparison.csv`. Expect **ten cases**,
+   five per model, with **500 nodes** each and information coverage **all**. Compare the centrality
+   label with the independent degree verdict and the separate generator-agreement column.
+2. Open `comparison.json`: inspect aggregate agreement/disagreement/inconclusive counts, the
+   fraction with conclusive comparisons, and agreement among those conclusive cases. Do not
+   present conditional agreement as overall classification accuracy.
+3. For one case, inspect `er-seed42/summary.json` or `scale-free-seed42/summary.json`. Classification
+   is at the root (`classification`), while robustness remains `metrics.robustness`. Inspect all
+   five distributions' fit statistics, counts, reasons, numerical warnings, label basis,
+   independent degree model parameters/support/AICs, and `degree_agreement`.
+4. Read the **Network class** section at the end of each case's report. An information Gaussian
+   verdict produces an inconclusive network label, even when degree evidence clearly favors ER.
+   Check the supporting AUC gap against that case's node robustness values.
+5. Open the ten `classification_*.png` files in each first-seed case's `figures/` folder. Log-log
+   figures show fitted power-law tails and xmin; log-y figures show exponential and half-normal
+   body fits. A model can be relatively preferred while visibly differing from the empirical
+   curve. The other eight cases skip plotting by default; `--figures all` enables every figure.
+6. View `data/ticket07-demo/seed42/models.png`, its generation manifest and input GeoPackages in
+   QGIS. Each seed folder contains the two model inputs, directed input layers and reusable
+   `er.yaml` / `scale-free.yaml` configs. Output GeoPackages retain the baseline physical network.
+7. To rerun one case independently:
+
+   ```sh
+   georesilience run --config data/ticket07-demo/seed42/er.yaml --out results/ticket07-er-check --overwrite
+   ```
+
+8. To test fallback, copy a generated YAML, set `criticality.exact_info_max_nodes: 0` and
+   `criticality.k_nodes: 25`, then run to a separate folder. Expect coverage `candidates`, basis
+   `betweenness_fallback`, and the explicit candidate-information exclusion sentence in the report.
+   Candidate information fits remain descriptive. Do not include this modified case in the
+   full-information ten-case comparison.
+9. To regenerate inputs only, use `python examples/run_ticket07_benchmark.py --generate-only`.
+   To rebuild aggregate files from completed outputs without rerunning analysis:
+
+   ```sh
+   python examples/run_ticket07_benchmark.py --summarize-only
+   ```
+
+10. For a larger follow-up, pass `--nodes 1000 --out results/ticket07-1000 --overwrite`. The runner
+    updates all-node information coverage and exact efficiency sampling to match the new size.
+    Keep seed/threshold choices fixed before examining results; do not tune them to force matches.
+
+### Verified benchmark findings (500 nodes)
+
+| Model | Seed | Roads | Info verdict | Info tail count | Ticket network label | Degree evidence | Degree comparison |
+| --- | --- | --- | --- | --- | --- | --- | --- |
+| ER | 42 | 1,541 | gaussian | 258 | inconclusive | poisson_like | inconclusive |
+| ER | 43 | 1,530 | gaussian | 130 | inconclusive | poisson_like | inconclusive |
+| ER | 44 | 1,540 | gaussian | 295 | inconclusive | poisson_like | inconclusive |
+| ER | 45 | 1,512 | gaussian | 270 | inconclusive | poisson_like | inconclusive |
+| ER | 46 | 1,503 | gaussian | 181 | inconclusive | poisson_like | inconclusive |
+| BA | 42 | 1,491 | power_law | 467 | scale-free | power_law_like | agreement |
+| BA | 43 | 1,491 | gaussian | 33 | inconclusive | power_law_like | inconclusive |
+| BA | 44 | 1,491 | power_law | 416 | scale-free | power_law_like | agreement |
+| BA | 45 | 1,491 | gaussian | 32 | inconclusive | power_law_like | inconclusive |
+| BA | 46 | 1,491 | power_law | 66 | scale-free | power_law_like | agreement |
+
+The degree comparison favors the corresponding reference family in **all ten cases**. The
+centrality rule gives **three agreements, zero disagreements and seven inconclusive comparisons**:
+only **30%** of cases yield conclusive comparisons. Agreement among those three is 100%, but this
+is **not 100% classification accuracy**. No ER case receives an exponential network label under
+this rule. BA seeds 43 and 45 have selected information tails with fewer than the required
+50 observations; their body verdict is Gaussian, which maps to an inconclusive network label.
+
+The node AUC gaps are about **0.0008–0.0054 for ER** and **0.0580–0.0871 for BA**, supporting
+stronger attack/failure separation for these BA samples. The gap does not override inconclusive
+centrality verdicts. These findings were recorded without changing the ticket thresholds or seeds.
+
+### Meaning of inconclusive labels and benchmark limitations
+
+An **inconclusive network label** is an abstention under the ticket's decision rule. It can follow
+a successful fit: full-information `power_law` maps to `scale-free`, `exponential` maps to
+`exponential`, and either `gaussian` or an inconclusive distribution verdict maps to an
+`inconclusive` network label. Here, `gaussian` means the nonnegative **half-normal** body reference
+is preferred under the ordered rules; it does not establish a Gaussian data generator.
+
+All seven inconclusive benchmark cases have a **Gaussian information-distribution verdict**.
+Every case computed information centrality for all **500 nodes**, and all ten information fits
+have `fit_error: null`. These labels therefore do not indicate missing information values or a
+recorded fit failure. Numerical warnings are retained separately in the case summaries.
+
+- **Five ER cases:** the half-normal body is preferred over exponential. The rule does not map
+  this information verdict to either network family. Poisson-like ER degree structure does not
+  imply an exponential information-centrality distribution.
+- **BA seeds 43 and 45:** the selected tails contain **33 and 32 observations**, below the required
+  **50**. Their power-law-versus-exponential comparison p-values are approximately **0.224 and
+  0.259**, also failing the required **p < 0.1**. Both checks fail; small tails are not the only
+  reason the power-law rule is unmet. The half-normal body then wins under the ordered rules.
+  The fitted tail contains only values at or above the selected `xmin`, so a 500-node graph does
+  not necessarily provide 50 tail observations.
+- **BA seeds 42, 44 and 46:** the power-law conditions pass, producing `scale-free` labels.
+
+The implementation follows the specified rule, but the experiment demonstrates **limited
+coverage and no reliable general separation of ER and BA degree families by this centrality
+criterion**: only **3/10 cases (30%)** receive conclusive labels. Their agreement does not establish
+100% classifier accuracy or absolute goodness of fit. Successful software tests verify the
+implemented calculations and branches; they do not validate the scientific hypothesis.
+
+Preserve and report these abstentions. A follow-up with **1,000 nodes and the same seeds and
+thresholds**, chosen before inspecting results, could investigate finite-sample effects. Larger
+graphs may help with thin BA tails, but do not guarantee exponential information distributions
+for ER graphs or agreement between degree and centrality classifications. This follow-up has
+**not been run**. Do not lower thresholds or relabel Gaussian information as exponential to force
+agreement. Completion of Ticket 07 records implementation and manual verification, including
+these observed limitations.
+
+### Verification results
+
+- Final full offline suite: **90 passed, 4 skipped** in **247.86 seconds**. This includes **26 new
+  classification cases**. The skips are the existing three live OSM integration tests and the
+  60,000-node benchmark; neither was rerun for this ticket.
+- Fixed-seed **5,000-sample** controls produced power-law, exponential and half-normal verdicts
+  as required; uniform was not classified as power law. Independent closed-form body MLEs/AICs
+  agree with the implementation. Small samples, zero/constant/missing values, unit invariance,
+  exact threshold boundaries, numerical failures and every label/fallback branch are covered.
+  Unavailable likelihood comparisons cannot count as evidence for a power law.
+- Degree diagnostic tests independently reconstruct both discrete log likelihoods on the common
+  support. Small ER/BA end-to-end tests verify full coverage, saved configs, comparison outputs,
+  reaggregation without analysis, nonempty-output refusal and figure cleanup during overwrite.
+- The full ten-graph 500-node experiment completed successfully with every information value
+  computed and all 500 efficiency sources used. All comparison fields, case outputs and
+  representative classification figures were produced; representative fit plots were inspected.
+- An independent artifact audit checked all ten JSONs for finite numbers, GeoPackage node counts
+  and complete information values, finite likelihood comparisons, exactly **231 node-curve rows
+  per case**, correct AUC-gap arithmetic, ten comparison rows and ten classification figures per
+  representative case. Aggregate files were rebuilt successfully from completed outputs.
+- `git diff --check` passed. Verification used Python **3.13.3**, powerlaw **2.0.0**, SciPy
+  **1.18.1** and the existing temporary environment. You confirmed completion after reviewing
+  the generated outputs and the inconclusive-label explanation on **11 October 2026**.
+  Ticket 07 is complete; Ticket 08 has not been started.

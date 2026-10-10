@@ -14,6 +14,7 @@ from shapely.geometry import Point
 from . import __version__
 from .config import RunConfig
 from .centralities import centrality_report, compute_centralities
+from .classification import classify_network, classification_report, write_classification_figures
 from .criticality import compute_criticality, criticality_report
 from .figures import FIGURE_FILENAMES, write_figures, write_robustness_figures
 from .links import _link_rows
@@ -24,7 +25,7 @@ from .robustness import compute_robustness, robustness_report, write_curves
 
 def _versions():
     result = {"python": platform.python_version()}
-    for package in ("osmnx", "networkx", "scipy", "networkit", "numpy"):
+    for package in ("osmnx", "networkx", "scipy", "networkit", "numpy", "powerlaw"):
         try:
             result[package] = version(package)
         except PackageNotFoundError:
@@ -88,6 +89,11 @@ def run(config: RunConfig, out_override: Path | None = None, overwrite: bool = F
     statistics["robustness"] = robustness.summary
     statistics["runtime_seconds"].update(robustness.runtime_seconds)
     write_curves(robustness, out_dir / "robustness_curves.csv")
+    classification = classify_network(
+        {"degree": list(degree.values()), **node_metrics,
+         "information": [criticality.information[node] for node in analysis.node_ids]},
+        criticality.information_summary, robustness.summary)
+    statistics["runtime_seconds"].update(classification.runtime_seconds)
     n = len(analysis.node_ids)
     nodes = []
     for i, (node, data) in enumerate(graph.nodes(data=True)):
@@ -116,6 +122,7 @@ def run(config: RunConfig, out_override: Path | None = None, overwrite: bool = F
                  "node_count": len(graph), "link_count": len(links),
                  "directed_edge_count": graph.number_of_edges()},
         "cleaning": cleaning,
+        "classification": classification.summary,
         "computation": computation,
         "metrics": {"degree": {"mean": sum(degree.values()) / n if n else 0,
                                  "max": max(degree.values(), default=0),
@@ -134,6 +141,7 @@ def run(config: RunConfig, out_override: Path | None = None, overwrite: bool = F
     lines.extend(["", *redundancy_report(screening.summary, links)])
     lines.extend(["", *criticality_report(criticality.summary, criticality.information_summary)])
     lines.extend(["", *robustness_report(robustness.summary)])
+    lines.extend(["", *classification_report(classification.summary)])
     lines = [line.encode("ascii", "backslashreplace").decode() for line in lines]
     lines = [textwrap.fill(line, width=100) if len(line) > 100 else line for line in lines]
     (out_dir / "report.txt").write_text("\n".join(lines) + "\n")
@@ -141,4 +149,5 @@ def run(config: RunConfig, out_override: Path | None = None, overwrite: bool = F
     if config.output.figures:
         write_figures(nodes_gdf, links_gdf, out_dir / "figures")
         write_robustness_figures(robustness, out_dir / "figures")
+        write_classification_figures(classification, out_dir / "figures")
     return summary

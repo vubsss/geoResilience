@@ -1,8 +1,9 @@
 # GeoResilience
 
-GeoResilience analyzes road network structure and resilience. Tickets 01–06 provide input,
+GeoResilience analyzes road network structure and resilience. Tickets 01–07 provide input,
 cleaning, physical road links, exact centralities, redundancy screening, single-road damage,
-information centrality, cumulative attack/failure experiments, and auditable outputs. Later analysis tickets are
+information centrality, cumulative attack/failure experiments, distribution classification,
+and auditable outputs. Later analysis tickets are
 tracked in [TICKET_UPDATES.md](TICKET_UPDATES.md).
 
 Install with Python 3.10 or newer:
@@ -164,7 +165,7 @@ Non-empty output folders require `--overwrite`. The command writes:
 | File | Contents |
 | --- | --- |
 | `network.gpkg` | Projected `nodes` and physical-link `edges` layers; degree, centrality and redundancy metrics |
-| `summary.json` | Input, CRS, download time, applied type, boundary, cleaning counts and metrics |
+| `summary.json` | Input, CRS, cleaning counts, metrics and root-level `classification` evidence |
 | `report.txt` | ASCII network summary, cleaning, degree, centralities, redundancy and top-road tables |
 | `run_config.yaml` | Resolved defaults and package versions; reusable as a run config |
 | `robustness_curves.csv` | Per-step cumulative attack and random-failure measurements |
@@ -685,3 +686,165 @@ then rerun the same configs. Their 500-source efficiency becomes an estimate; in
 generated demo inputs, and the 500-node reference values above no longer apply.
 For a static comparison, copy a config, set `adaptive: false`, and run it into a separate folder
 with `--out`. To compare node strategies, similarly set `node_attack_metric: betweenness`.
+
+## Distribution classification (ticket 07)
+
+Every run fits degree, closeness, straightness, betweenness and computed information-centrality
+values. No new configuration section is needed. `summary.json.classification` contains the
+distribution evidence and the network decision; the report adds **Network class**.
+
+Only positive finite values enter fits. Counts of excluded zeros, nonfinite values and negatives
+are recorded separately. Fewer than 50 positive values, fewer than three distinct values, or a
+failed tail fit give an inconclusive verdict with a reason. Missing information values do not
+enter its distribution. Fits on a candidate set remain descriptive.
+
+The per-distribution rules follow Ticket 07, in order:
+
+1. Fit a power-law tail with package-selected `xmin`, comparing against exponential and lognormal
+   tails. Select `power_law` when it significantly beats exponential at `p < 0.1`, lognormal does
+   not significantly beat it, and at least 50 observations are in the tail.
+2. Fit exponential and half-normal bodies with location fixed at zero. `delta_aic` is exponential
+   AIC minus half-normal AIC. Values greater than 10 give `gaussian` (the ticket's half-normal
+   shorthand); values below -10 give `exponential`. A significantly preferred exponential tail
+   also gives `exponential`, after the earlier rules.
+3. Otherwise return `inconclusive`.
+
+| Information coverage | Evidence | Network label |
+| --- | --- | --- |
+| All nodes | Information `power_law` | `scale-free` |
+| All nodes | Information `exponential` | `exponential` |
+| All nodes | Information Gaussian/inconclusive | `inconclusive` |
+| Candidates only | Betweenness `exponential` | `scale-free`, inferred from betweenness |
+| Candidates only | Betweenness `gaussian` | `exponential`, inferred from betweenness |
+| Candidates only | Other betweenness verdict | `inconclusive` |
+
+JSON labels remain `scale-free`, `exponential` or `inconclusive`; `label_basis` distinguishes
+`information` from `betweenness_fallback`. The report explicitly states when candidate information
+is excluded. For full information, exponential betweenness supports the self-organized pattern;
+Gaussian betweenness supports the planned pattern. Opposing recognized patterns are inconsistent;
+other secondary verdicts are `n/a`. There is no betweenness fallback when full information itself
+is inconclusive. Degree, closeness, straightness and the robustness gap never determine this label.
+
+The supporting node gap is failure AUC(S) minus attack AUC(S). Its sentence explains the sign,
+without inventing a threshold for a "large" gap. Links-only robustness leaves the gap null.
+
+For each distribution the summary records `alpha`, `xmin`, `n_tail`, `R_exp`, `p_exp`, `R_ln`,
+`p_ln`, `delta_aic`, body scales/AICs, tail KS distance, sample counts, verdict/reason and numerical
+warnings. Continuous values are fitted in median units to improve conditioning, then scales and
+`xmin` are restored to original units. Degree is fitted discretely without rescaling, using exact
+discrete fitting. The power-law exponent range is explicitly `alpha > 1` with no upper cap:
+installed powerlaw 2.0 otherwise caps it at 3, which would constrain the light tails in this study.
+The package version and rule thresholds are recorded. `metrics.runtime_seconds.classification`
+measures fitting, independently of plotting.
+
+With figures enabled, ten PNGs are added: `classification_<distribution>_loglog.png` shows the
+empirical positive-value CCDF and fitted power-law tail; `classification_<distribution>_logy.png`
+shows the empirical CCDF and exponential/half-normal body fits. Tail curves are multiplied by
+the observed tail fraction so they share the empirical normalization. Fits can be shown even
+when they do not win the verdict. Existing Ticket 03 CCDFs remain available.
+
+### Independent degree comparison
+
+`classification.degree_evidence` compares a discrete Poisson reference and a bounded discrete
+power-law reference on the **same positive degree observations and common support**
+`observed minimum ... N-1`. Both are normalized on that support and have one fitted parameter.
+`delta_aic = AIC_Poisson - AIC_power_law`: above 10 is `power_law_like`, below -10 is `poisson_like`,
+otherwise inconclusive. Parameter estimates, support and AICs are recorded. Power-law optimization
+uses exponent bounds 0–20; reaching the upper boundary gives inconclusive evidence.
+
+This comparison is separate from the ticket's degree-tail fit and its continuous body descriptors.
+Neither degree result feeds back into the network label. `degree_agreement` maps `poisson_like`
+to the exponential reference family and `power_law_like` to scale-free, recording agreement,
+disagreement or an inconclusive comparison. The Poisson reference approximates sparse ER degree
+structure; it is not a simple exponential fit to all ER degrees.
+
+### Run the ten-graph benchmark
+
+From the repository root in your activated environment:
+
+```sh
+python examples/run_ticket07_benchmark.py --overwrite
+PYTHONPATH= PYTEST_DISABLE_PLUGIN_AUTOLOAD=1 python -m pytest -q tests/test_classification.py
+```
+
+Defaults generate **five ER and five Barabási–Albert graphs**, **500 nodes each**, using seeds
+**42, 43, 44, 45, 46**. The generator reuses Ticket 06's topology recipe: ER `p=6/(N-1)` conditioned
+on connectedness, BA `m=3`, bidirectional roads of equal 1,000 m analysis length, and schematic
+coordinates. Generation seeds, ER sampling attempts and model parameters are recorded.
+
+Full information centrality is enabled with `criticality.exact_info_max_nodes: 500`. Independent
+road-damage candidate limits stay small. Supporting robustness uses **nodes only**, **20 steps**,
+**20% removal**, adaptive degree attacks, **10 failures** and all 500 efficiency sources. These
+settings are shared by all ten cases; the Ticket 06 reference curves used 50 steps and both
+element types, so their gap values should not be substituted here.
+
+The first ER/BA pair gets all figures by default. Other cases retain full numeric outputs while
+avoiding repeated plot rendering. Use `--figures all` or `--figures none` to change this.
+Inputs, QGIS copies, model illustrations and reusable per-case YAMLs are generated under
+`data/ticket07-demo/seed42/` through `seed46/`. Each seed folder has `er.graphml`,
+`scale-free.graphml`, corresponding `*-input.gpkg`, `models.png`, `manifest.json`, `er.yaml` and
+`scale-free.yaml`. These generated files are gitignored; the benchmark script is source.
+
+Results live under `results/ticket07-benchmark/`:
+
+- `comparison.csv`: ten rows with graph statistics, centrality verdicts, labels, degree evidence,
+  agreement with degree and generator family, and the node attack/failure gap.
+- `comparison.json`: the rows, aggregate counts, conclusive fraction and agreement among conclusive
+  comparisons, with the benchmark parameters and generation metadata.
+- `report.txt`: the complete comparison table and interpretation.
+- `benchmark_manifest.json`: identifies the current cases, their configs and generation settings.
+- `er-seed42/`, `scale-free-seed42/`, etc.: ordinary pipeline outputs for each case. Representative
+  folders also contain all classification and robustness plots.
+
+Useful commands:
+
+```sh
+# Generate inputs and configs without running analyses:
+python examples/run_ticket07_benchmark.py --generate-only
+# Rerun one generated case into a separate folder:
+georesilience run --config data/ticket07-demo/seed42/er.yaml --out results/ticket07-er-check --overwrite
+# Rebuild aggregate files from completed case outputs, without recomputation:
+python examples/run_ticket07_benchmark.py --summarize-only
+# Use a different study size or seed set (reference values will change):
+python examples/run_ticket07_benchmark.py --nodes 1000 --seeds 42 43 44 45 46 --out results/ticket07-1000 --overwrite
+```
+
+The ordinary automated suite checks fitting and branch logic plus small end-to-end fixtures.
+The full ten-case experiment runs explicitly through the script; it is not repeated on every
+pytest invocation. Benchmark disagreements do not fail software tests or change thresholds.
+
+For the documented 500-node seeds, degree evidence favors Poisson for all five ER graphs and
+power law for all five BA graphs. Ticket 07 labels BA seeds **42, 44 and 46** scale-free; the other
+**seven cases are inconclusive**, including every ER case. Thus there are **3 agreements,
+0 disagreements and 7 inconclusive comparisons**, with a **30% conclusion rate**. Agreement
+among the three conclusive cases is 100%; this is not 100% classification accuracy. Detailed
+per-case findings are recorded in [TICKET_UPDATES.md](TICKET_UPDATES.md).
+
+An inconclusive network label can follow successful fitting. All seven such cases above have
+an information verdict of `gaussian` (the half-normal reference), which the ticket does not map
+to either network family. Information was computed for every node and no information fit error
+was recorded. BA seeds **43 and 45** have only **33 and 32** selected tail observations, below
+the required 50, and their power-law-versus-exponential p-values (**0.224 and 0.259**) also fail
+the required `p < 0.1`. For ER, Poisson-like degrees do not imply exponential information
+centrality. These outcomes expose limited coverage of the specified criterion, even when the
+software applies it correctly. Larger samples may help thin tails but do not guarantee agreement;
+retain inconclusive results rather than adjusting thresholds to force matches.
+
+### Interpretation and paper limits
+
+[AP2](papers/AP2-centrality_measures_in_urban_networks.pdf) distinguishes city samples through
+information centrality, and notes geographic constraints on primal junction degree. Synthetic
+ER/BA models do not automatically represent planned/self-organized cities. Comparing their
+degree evidence with Ticket 07's label is an additional empirical experiment.
+
+The project still uses inverse-distance efficiency `mean(1/d)` rather than AP2's spatial
+`mean(d_E/d)`. Reported `alpha` is the fitted **density** exponent; an ideal continuous power-law
+CCDF has exponent `alpha - 1`. It should not be directly equated with AP2's plotted CCDF exponents.
+
+These verdicts are **relative model evidence under the ticket's rules**. AIC and likelihood-ratio
+comparisons do not establish absolute goodness of fit. The uniform control can receive `gaussian`
+because half-normal fits better than exponential, despite its known uniform generator. A bootstrap
+goodness-of-fit analysis is not implemented. Centrality observations share a graph and are
+dependent, so nominal p-values require caution. Numerical fitting warnings remain in the JSON.
+Inconclusive outcomes are counted separately rather than presented as errors or silently dropped.
+The benchmark reports agreement, not general classification accuracy for cities.
