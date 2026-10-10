@@ -4,8 +4,8 @@
 - [x] **02 — All inputs + full cleaning** — completed, tested and manually verified by you.
 - [x] **03 — Exact path-based centralities** — completed, tested and manually verified by you.
 - [x] **04 — Screening and candidates** — completed, tested and manually verified by you.
-- [x] **05 — Single-link criticality + information centrality** — implemented and automatically tested; awaiting your manual verification.
-- [ ] **06 — Attack vs failure curves** — not started.
+- [x] **05 — Single-link criticality + information centrality** — completed, tested and manually verified by you.
+- [x] **06 — Attack vs failure curves** — completed, tested and manually verified by you, including ER and scale-free examples.
 - [ ] **07 — Distribution classification** — not started.
 - [ ] **08 — Failure probabilities** — not started.
 - [ ] **09 — Connectivity reliability** — not started.
@@ -123,7 +123,7 @@ georesilience run --config results/ticket02-graphml/run_config.yaml --out result
 
 Ticket **03** was implemented on **10 October 2026** and is **completed and manually verified
 by you**, as confirmed on **10 October 2026**.
-Tickets 06–16 have not been started. Tickets 04 and 05 are documented below.
+Tickets 07–16 have not been started. Tickets 04–06 are documented below.
 
 ### Changes
 
@@ -357,9 +357,9 @@ is preserved. All roads are 100 m except the 150 m backup road in the parallel e
 
 ## Ticket 05 — Single-link criticality + information centrality
 
-**Current ticket: 05.** Implemented on **10 October 2026**; automated verification is complete.
-**Your manual verification is pending.** Tickets 02, 03 and 04 remain completed and manually verified.
-Tickets 06–16 have not been started.
+Ticket **05** was implemented on **10 October 2026** and is **completed, tested and manually verified
+by you**, as confirmed on **10 October 2026**. Tickets 02, 03 and 04 remain completed and manually verified.
+Ticket 06's implementation is documented below; tickets 07–16 have not been started.
 
 ### Changes
 
@@ -502,4 +502,179 @@ All nodes and roads are selected; `all: true` still leaves analytic bridges in t
   **3.13.3**, SciPy **1.18.1** and OSMnx **2.1.1** in the existing temporary environment.
   After the visual check prompted the collinear-map bounds fix, both affected output/figure
   regression tests passed again, and all four demo figure sets were regenerated.
-  Your manual verification is pending.
+  You confirmed that you checked the results on **10 October 2026**. Ticket 05 is complete.
+
+## Ticket 06 — Attack vs failure curves
+
+Ticket **06** was implemented on **10 October 2026** and is **completed, tested and manually
+verified by you**, as confirmed on **10 October 2026**, including the ER and scale-free examples.
+Your confirmation of Ticket 05's results has been recorded above.
+Tickets 07–16 have not been started.
+
+### Changes
+
+- Added validated `robustness` settings for link/node removal, step count, removal horizon,
+  adaptive/static attacks, node attack metric, failure-run count and efficiency source count.
+  Seeds must be nonnegative. Resolved defaults are included in `run_config.yaml`.
+- Added `src/georesilience/robustness.py`. Link attacks use exact length-weighted directed
+  NetworKit edge betweenness; the physical-road score is the maximum of its directed arc scores.
+  Node attacks use directed weighted betweenness or undirected distinct-neighbour degree.
+  Removing a physical road closes all its directions; removing a node closes all incident roads.
+- Adaptive attacks recompute scores before each nonempty batch. Static attacks rank only once.
+  Equal scores use ascending link IDs or original node order; numerical ties use `1e-12` tolerance.
+  Parallel roads remain available after a shorter road closes, with equal-length choices handled
+  consistently with Ticket 03. Self-loops are excluded from the link-removal population.
+- Added independent random-failure permutations using spawned seeds. The efficiency sample is
+  fixed across steps, attack/failure runs and element types. Each experiment starts from the same
+  original graph. Original N is retained in every denominator; components are not recleaned.
+- Tracked largest strong/weak component fractions and relative efficiency at each step. Removed
+  nodes are excluded from component sizes but stay in the efficiency denominator with zero
+  contributions. Efficiency uses chunked shortest paths and the configured workers/memory budget.
+  Using at least N sources makes efficiency exact; smaller samples give an estimate.
+- Added `robustness_curves.csv`, robustness summary/AUCs, first observed `S_scc < 0.5`, failure means
+  and 5th–95th percentile bands, and a report section with link results first and labelled headline.
+  Added `robustness_scc.png` and `robustness_efficiency.png`, each with one panel per enabled element.
+  Reused the prior progress logger via `progress.py`, including heartbeats and estimated time.
+- Added a reproducible generator, `examples/create_ticket06_demo.py`, and separate ER/scale-free
+  YAML configs. Generated GraphML, input GeoPackages, model illustration and manifest live in
+  gitignored `data/ticket06-demo/`; results remain gitignored. Scripts/configs are tracked source.
+- Added nine test cases covering known graphs, independent NetworkX references, reproducibility,
+  static/adaptive differences, weighted library inputs, zero-efficiency cases, validation,
+  output generation/overwrite, and both example generators. Updated README with configuration,
+  interpretation, example commands and expected results.
+
+### Conventions and paper context
+
+**Integer batches:** Ticket 06's literal per-step rounding can remove nothing throughout a small
+graph experiment. The implementation instead uses `floor(f_max * total)` as the integer budget
+and rounded cumulative counts to spread that budget across `steps`. Actual `f` is recorded in
+CSV; steps with zero new removals repeat the previous observation. No removal exceeds `f_max`.
+When the final actual fraction is below the requested horizon, AUC holds the final value constant
+to requested `f_max`, then divides trapezoidal area by `f_max`. Summary parameters record batch
+sizes, removed count and actual horizon. Tiny graphs can legitimately have a zero-removal budget.
+
+**Efficiency:** the convention remains **mean reciprocal shortest-path length `1/d`**, as in
+Tickets 03/05. It differs from AP2's spatial `d_E/d`. Here `E_rel` divides the fixed-source estimate
+by its own baseline, so it is dimensionless. Sampled sources that are removed remain in the
+denominator. A zero baseline produces empty CSV `E_rel` cells, null efficiency AUCs and an
+explanation on the efficiency plot. Optional library weights use `W_i * W_j`; the CLI is uniform.
+
+**Direction and scope:** Ticket 06 always uses directed travel, independently of Ticket 05's
+`analysis.directed_removal` flag. Its removal population is the full cleaned network, independently
+of the earlier `criticality` candidate limits. Output `network.gpkg` remains the baseline network;
+the cumulative experiments are curves, not separate per-step GeoPackage layers.
+
+The model comparison is inspired by the supplied
+[Albert, Jeong & Barabási paper](papers/AP1-error_and_attack_tolerance_of_complex_networks.pdf).
+The example configs use its degree-based node targeting. The generated Barabási–Albert graph
+is a finite preferential-attachment example, not a fitted classification of empirical roads.
+These connectivity/efficiency curves do not reproduce the paper's diameter experiment.
+
+### Two supplied examples
+
+Both defaults have **500 nodes**, seed 42, about six neighbours per node, equal 1,000 m road
+lengths and bidirectional travel. Their schematic spring-layout coordinates are in EPSG:32644;
+drawn geometry length differs from the supplied analysis length. Crossings are only junctions
+when the roads share a graph node. Consolidation is disabled and inputs are marked simplified.
+
+| Example | Model | Physical roads | Mean degree | Maximum degree |
+| --- | --- | --- | --- | --- |
+| ER | `G(500, 6/499)`, sampled until connected | 1,541 | 6.164 | 18 |
+| Scale-free | Barabási–Albert, `n=500, m=3` | 1,491 | 5.964 | 65 |
+
+ER is explicitly conditioned on connectedness so cleaning does not discard requested nodes.
+The manifest records generation seeds, parameters and sampling attempts. Both configs use
+50 steps, `f_max=0.20`, adaptive degree-based node attacks, betweenness-based link attacks,
+10 random-failure runs and all 500 efficiency sources. Earlier Ticket 05 candidate limits are
+reduced for faster runs; Ticket 06 still examines all roads and nodes.
+
+### Run and manually verify
+
+From the repository root with your Python environment activated. The existing implementation
+environment can be activated using `source /tmp/georesilience-ticket02-venv/bin/activate` while
+it remains available. Otherwise use the README installation instructions.
+
+```sh
+python examples/create_ticket06_demo.py
+georesilience run --config examples/ticket06-er.yaml --overwrite
+georesilience run --config examples/ticket06-scale-free.yaml --overwrite
+PYTHONPATH= PYTEST_DISABLE_PLUGIN_AUTOLOAD=1 python -m pytest -q tests/test_robustness.py
+```
+
+1. Open `data/ticket06-demo/models.png`: compare the relatively even ER degrees with the BA hubs.
+   Inspect `manifest.json`. In QGIS, load `er-input.gpkg` and `scale-free-input.gpkg` from this folder.
+   Each has **500 nodes**; its edges layer contains **two directed edges per physical road**.
+   Output `results/ticket06-*/network.gpkg` edges count physical roads once.
+2. Read the **Robustness** section at the end of both reports. Links should appear first with
+   the headline label. Compare `summary.json.metrics.robustness`, including AUCs, the sample size,
+   exact-efficiency flag, actual horizon and per-step removals.
+3. Open each `robustness_curves.csv` in a spreadsheet. Expect **1,122 data rows** plus the header:
+   2 elements × (1 attack + 10 failures) × 51 observations. Attack is run 0; failures are runs 1–10.
+   All step-0 rows have `f=0`, `S_scc=S_wcc=E_rel=1`. Each experiment's fractions increase and the
+   measured quantities cannot increase except for floating-point roundoff. Since roads are
+   bidirectional in these examples, `S_scc` and `S_wcc` agree.
+4. Open `figures/robustness_scc.png` and `figures/robustness_efficiency.png` in both result folders.
+   Red is the targeted attack; blue is the random-failure mean with a 5th–95th percentile band.
+   Both have link and node panels. The scale-free example's node-attack efficiency curve should
+   fall much faster than its random-failure curve. The band is variation across the 10 runs,
+   not a confidence interval for the mean.
+5. Compare the reference results below. AUC means retained performance over the whole 0–20%
+   experiment, so higher is better; it is not the endpoint value. `f_half_attack` is null for all
+   four attack curves here: none falls strictly below 0.5 within the configured horizon.
+6. For a static comparison, copy one YAML, set `robustness.adaptive: false`, and run with
+   `--out results/ticket06-static --overwrite`. For a strategy comparison, instead change
+   `node_attack_metric: betweenness`. The algorithm tests contain a fixture proving the static
+   and adaptive second choices differ; the graphs need not differ at every removal step.
+7. Rerun a config with the same seed and compare CSVs for identical curves. A copy with
+   `analysis.n_jobs: 1` should also agree; runtimes/timestamps can differ. A changed seed should
+   change random-failure curves. To examine sampling, set `efficiency_sources: 100`: the summary
+   then says `efficiency_exact: false` and records the fixed 100 original sample IDs.
+
+To use **1,000 nodes**, run `python examples/create_ticket06_demo.py --nodes 1000`, then rerun both
+configs. This replaces the generated inputs, so the 500-node reference values no longer apply.
+Set `efficiency_sources: 1000` in config copies for exact all-source efficiency at that size;
+the supplied 500-source setting becomes an estimate.
+
+### Verified reference results (500 nodes, seed 42)
+
+| Graph / removed element | Attack AUC(S) | Mean failure AUC(S) | Attack AUC(E) | Mean failure AUC(E) | Final attack S |
+| --- | --- | --- | --- | --- | --- |
+| ER / links | 0.946790 | 0.996625 | 0.866839 | 0.944828 | 0.888 |
+| ER / nodes | 0.896460 | 0.897952 | 0.697513 | 0.785091 | 0.782 |
+| Scale-free / links | 1.000000 | 0.999410 | 0.895183 | 0.956400 | 1.000 |
+| Scale-free / nodes | 0.835500 | 0.899190 | 0.427121 | 0.790109 | 0.550 |
+
+Node removals end at **100/500 = 20%**. Link removals end at **308/1,541 ≈ 19.987%** for ER and
+**298/1,491 ≈ 19.9866%** for BA. All efficiency calculations here use every original source.
+The BA graph remains connected after its link attack despite losing efficiency: component size
+alone does not capture longer surviving routes. The relative response to attacks depends on the
+strategy and metric; these finite examples do not establish universal model superiority.
+
+### Verification results
+
+- Full offline suite: **64 passed, 4 skipped** in **216.53 seconds**. The skips are the three live
+  OSM tests and the existing 60,000-node benchmark; neither was rerun for this ticket.
+- New tests passed, including two **200-node** random spatial fixtures checked against independent
+  NetworkX directed efficiency and component calculations at **every attack/failure step**, with
+  efficiency agreement within `1e-9`. Initial directed node betweenness also matches NetworkX.
+- Known-graph checks cover star hub first with component size `1/N`, a ring remaining connected
+  after one road closure, parallel backup availability, one-way reachability, complete node removal,
+  weighted efficiency and zero baselines. Static/adaptive second choices differ on the path fixture.
+- Fixed-seed curves/removal histories match exactly across **1 and 2 jobs**, including forced small
+  chunks. Tests also cover stable streams when element selection/order or failure-run count changes.
+- Both complete 500-node CLI examples finished successfully and wrote CSV, summary, report,
+  resolved config, GeoPackage and all figures. Robustness computation took about **25 seconds per
+  example** in this environment; hardware and concurrent workloads affect this time.
+- **ER and scale-free test coverage:** `test_er_and_scale_free_generator` in
+  `tests/test_robustness.py` generates both models with **200 nodes** and checks node/edge counts,
+  strong connectivity, simplified GraphML, equal 1,000 m analysis lengths, input GeoPackage
+  exports, model plot, ER probability and BA road count. The separate **500-node** end-to-end
+  examples use `examples/ticket06-er.yaml` and `examples/ticket06-scale-free.yaml`, with results
+  in `results/ticket06-er/` and `results/ticket06-scale-free/`. You confirmed manual verification
+  of these results on **10 October 2026**; their graph statistics and AUCs are recorded above.
+- Input topology/degree plots and output robustness plots were visually inspected. Verification
+  used Python **3.13.3**, NetworKit **11.2.2**, SciPy **1.18.1** and the existing temporary environment.
+  After improving the model plot's log-axis labels, the generator regression test passed again
+  and both 500-node input examples were regenerated with unchanged topology. Both result CSVs
+  were independently checked for row counts, baseline values and monotonicity. `git diff --check` passed.
+  You confirmed that you manually checked the results on **10 October 2026**. Ticket 06 is complete.

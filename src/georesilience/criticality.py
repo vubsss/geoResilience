@@ -2,51 +2,18 @@
 
 import math
 from dataclasses import dataclass
-from threading import Event, Thread
 from time import perf_counter
 
 import numpy as np
 
 from .centralities import describe
-from .network import _log
+from .progress import StageProgress as _Progress
 from .removal import (ActiveEdgeGraph, AffectedSourceRecompute, BaselineDistances, InverseReducer,
                       analytic_bridge_damage, full_link_damage, node_weights, removal_engine)
 from .shortest_paths import aggregate_efficiency
 
 
 DAMAGE_FIELDS = ("eff_drop", "disc_pair_frac", "extra_km_total", "affected_pairs", "extra_m_mean_affected")
-
-
-class _Progress:
-    def __init__(self, label, total):
-        self.label, self.total, self.done = label, total, 0
-        self.started = self.last_log = perf_counter()
-        self.stop = Event()
-        self.thread = Thread(target=self._heartbeat, daemon=True)
-
-    def log(self):
-        elapsed = perf_counter() - self.started
-        eta = f"{elapsed * (self.total - self.done) / self.done:.1f}s" if self.done else "pending"
-        _log(f"{self.label}: {self.done}/{self.total}; estimated time remaining {eta}")
-        self.last_log = perf_counter()
-
-    def _heartbeat(self):
-        while not self.stop.wait(30):
-            self.log()
-
-    def advance(self):
-        self.done += 1
-        if self.done == self.total or perf_counter() - self.last_log >= 10:
-            self.log()
-
-    def __enter__(self):
-        self.log()
-        self.thread.start()
-        return self
-
-    def __exit__(self, *args):
-        self.stop.set()
-        self.thread.join()
 
 
 @dataclass

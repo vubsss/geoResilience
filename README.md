@@ -1,8 +1,8 @@
 # GeoResilience
 
-GeoResilience analyzes road network structure and resilience. Tickets 01–05 provide input,
+GeoResilience analyzes road network structure and resilience. Tickets 01–06 provide input,
 cleaning, physical road links, exact centralities, redundancy screening, single-road damage,
-information centrality, and auditable outputs. Later analysis tickets are
+information centrality, cumulative attack/failure experiments, and auditable outputs. Later analysis tickets are
 tracked in [TICKET_UPDATES.md](TICKET_UPDATES.md).
 
 Install with Python 3.10 or newer:
@@ -82,6 +82,14 @@ criticality:
   exact_info_max_nodes: 5000
   bridge_analytic_max_side: 2000
   all: false
+robustness:
+  removal: [links, nodes]
+  steps: 50
+  f_max: 0.20
+  adaptive: true
+  node_attack_metric: betweenness
+  failure_runs: 10
+  efficiency_sources: 500
 output:
   dir: results/
   figures: true
@@ -159,6 +167,7 @@ Non-empty output folders require `--overwrite`. The command writes:
 | `summary.json` | Input, CRS, download time, applied type, boundary, cleaning counts and metrics |
 | `report.txt` | ASCII network summary, cleaning, degree, centralities, redundancy and top-road tables |
 | `run_config.yaml` | Resolved defaults and package versions; reusable as a run config |
+| `robustness_curves.csv` | Per-step cumulative attack and random-failure measurements |
 | `figures/degree_hist.png` | Degree histogram, unless `output.figures: false` |
 
 `summary.json.cleaning` records `raw`, `simplified`, `consolidated`, and `final` counts
@@ -544,3 +553,135 @@ To check analytic handling against the full method, copy the path config and set
 `bridge_analytic_max_side: 0`; the three roads switch to `damage_method=full` with matching damage.
 Cost grows with the candidate count: complete information and every-road failure runs on large
 city networks are expensive. Start with the default candidate limits before choosing `all: true`.
+
+## Cumulative attacks and random failures (ticket 06)
+
+Every run also removes roads or junctions cumulatively and compares targeted attacks with random
+failures. Each experiment starts from the cleaned network. These experiments use the **directed**
+travel graph, including when Ticket 05's `analysis.directed_removal` is false. The network is not
+trimmed to its largest component again after removals.
+
+```yaml
+robustness:
+  removal: [links, nodes]       # either one, or both
+  steps: 50
+  f_max: 0.20
+  adaptive: true
+  node_attack_metric: betweenness  # or degree
+  failure_runs: 10
+  efficiency_sources: 500
+```
+
+Link attacks rank active physical roads by exact length-weighted directed edge betweenness,
+using the larger score of a two-way road's directions. Closing a road removes both directions.
+Parallel roads remain separate closure candidates: the shortest active road supplies an analysis
+arc; equal lengths select the lowest `link_id`. Other parallel roads have score zero until they
+supply a shortest arc. Self-loops are excluded from road removals.
+
+Node attacks use exact directed weighted node betweenness by default. Choosing `degree` counts
+distinct neighbours while ignoring travel direction. Removing a junction closes all incident
+roads. Adaptive attacks recompute scores before every batch with positive removals; static
+attacks (`adaptive: false`) use the initial ranking throughout. Ties use ascending road ID or
+original node order, with numerical score ties grouped at tolerance `1e-12`.
+
+Random failures use seeded permutations without replacement. Separate `SeedSequence` streams
+for sampling, link failures and node failures make results reproducible with `analysis.seed`.
+Changing thread count preserves curves; runtime and report timestamps can differ. Increasing
+the failure-run count preserves existing runs, and disabling one element preserves the other's
+permutations. The sample of efficiency sources stays fixed across every step and experiment.
+
+| CSV column | Meaning |
+| --- | --- |
+| `element`, `mode` | `links` or `nodes`; `attack` or `failure` |
+| `run`, `step` | Attack run 0; failure runs 1 through `failure_runs`; step 0 is the baseline |
+| `f` | Number removed / original number of that element |
+| `S_scc`, `S_wcc` | Largest strong/weak component size / original N |
+| `E_rel` | Fixed-source efficiency estimate / its baseline estimate |
+
+Removed nodes do not count in component sizes. They remain in the efficiency denominator,
+contributing zero as either source or target. With uniform weights, efficiency is
+`sum(1/d_sj) / (sample_size * (N - 1))` over the sampled original sources and all other original
+nodes. Unreachable pairs contribute zero. The implementation uses chunked shortest paths with
+the existing memory budget and workers. If `efficiency_sources >= N`, it uses all sources and
+efficiency is exact. A zero baseline makes `E_rel` undefined: CSV cells are empty, summary AUCs
+are null, and the efficiency plot explains this.
+
+**Efficiency convention:** this remains Ticket 03's inverse-distance `mean(1/d)`, rather than
+AP2's spatial `mean(d_E/d)`. `E_rel` is dimensionless and independent of the distance unit.
+These curves compare network topology and reachability; they do not reproduce AP1's diameter
+metric or establish a fitted power-law distribution.
+
+**Integer removal convention:** the budget is `floor(f_max * total)`, spread across the requested
+steps using rounded cumulative counts. A step can remove zero elements on a small graph; its
+measurements repeat. This avoids both exceeding `f_max` and rounding every small batch to zero.
+CSV fractions record actual removals. If the last fraction is below `f_max`, AUC holds the final
+value constant over that small remaining interval. AUC is the trapezoidal area divided by
+requested `f_max`; larger values mean more retained connectivity or efficiency. The summary
+records the actual horizon, removal count and per-step batch sizes.
+
+`summary.json.metrics.robustness` contains per-element attack AUCs, mean failure AUCs, mean and
+5th–95th percentile failure bands, parameters, sample node IDs, and `f_half_attack` (the first
+observed fraction where `S_scc < 0.5`, otherwise null). Links are flagged as the headline.
+The report includes the AUC table and final targeted-removal percentages.
+`figures/robustness_scc.png` and `figures/robustness_efficiency.png` each have a panel per enabled
+element, showing the attack, failure mean and failure percentile band. The band describes the
+simulated runs, not a confidence interval for a population mean. `output.figures: false` suppresses
+these figures along with the earlier figures. Progress logs include an estimated remaining time.
+
+### Run the ER and scale-free examples
+
+From the repository root in your activated environment:
+
+```sh
+python examples/create_ticket06_demo.py
+georesilience run --config examples/ticket06-er.yaml --overwrite
+georesilience run --config examples/ticket06-scale-free.yaml --overwrite
+PYTHONPATH= PYTEST_DISABLE_PLUGIN_AUTOLOAD=1 python -m pytest -q tests/test_robustness.py
+```
+
+The generator creates two **500-node** graphs with similar mean degree:
+
+| Model, seed 42 | Physical roads | Mean degree | Maximum degree |
+| --- | --- | --- | --- |
+| Erdős–Rényi `G(n,p)`, `p=6/(n-1)`, resampled until connected | 1,541 | 6.164 | 18 |
+| Barabási–Albert preferential attachment, `m=3` | 1,491 | 5.964 | 65 |
+
+All roads are bidirectional and have equal 1,000 m analysis lengths, so shortest-path rankings
+depend on topology. Coordinates are a schematic spring layout in EPSG:32644; geometry length
+differs from analysis length. Crossings are not junctions unless they share a graph node.
+The graphs are synthetic examples, and the finite BA sample is not a statistical classification
+of a real road network. ER sampling is explicitly conditioned on connectedness so cleaning keeps
+all 500 nodes. This is inspired by the model comparison in
+[Albert, Jeong & Barabási](papers/AP1-error_and_attack_tolerance_of_complex_networks.pdf).
+
+Both configs use adaptive **degree-based node attacks**, betweenness-based link attacks,
+50 steps, 20% maximum removal, 10 failure runs and all 500 efficiency sources. Ticket 05's
+candidate limits are reduced to keep the earlier independent-removal stage quick; Ticket 06
+still considers **all** roads and junctions.
+
+Inspect `data/ticket06-demo/models.png` and `manifest.json` for the input topology and generation
+parameters. For QGIS, open `er-input.gpkg` or `scale-free-input.gpkg` in that folder; each has nodes
+and directed edges (two overlapping edges per physical road). Corresponding output GeoPackages
+are in `results/ticket06-er/` and `results/ticket06-scale-free/` and retain the baseline network.
+Attack steps are recorded in CSV curves rather than exported as separate map layers.
+
+Each results folder has **1,122 CSV data rows**: 2 elements × 11 experiments × 51 observations.
+All baseline rows have `S_scc=S_wcc=E_rel=1`. Expected node-attack endpoints for these seeds:
+
+| Model | Fraction of nodes removed | Final `S_scc` | Attack AUC(E) | Mean failure AUC(E) |
+| --- | --- | --- | --- | --- |
+| ER | 0.20 | 0.782 | 0.697513 | 0.785091 |
+| Scale-free | 0.20 | 0.550 | 0.427121 | 0.790109 |
+
+The BA example's hubs make targeted node removal more damaging to efficiency, while random
+node-failure AUCs are similar here. Neither node attack reaches `S_scc < 0.5` within this horizon,
+so `f_half_attack` is null. Link attacks give final `S_scc=0.888` for ER and `1.0` for BA;
+the BA network stays connected while losing efficiency. These are finite-example results,
+not a guarantee that one model dominates the other for every attack strategy or metric.
+
+To generate 1,000 nodes instead, use `python examples/create_ticket06_demo.py --nodes 1000`,
+then rerun the same configs. Their 500-source efficiency becomes an estimate; increase
+`robustness.efficiency_sources` to 1000 in config copies to use all sources. This replaces the
+generated demo inputs, and the 500-node reference values above no longer apply.
+For a static comparison, copy a config, set `adaptive: false`, and run it into a separate folder
+with `--out`. To compare node strategies, similarly set `node_attack_metric: betweenness`.

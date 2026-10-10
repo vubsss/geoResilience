@@ -4,7 +4,8 @@ import numpy as np
 
 NODE_MEASURES = ("closeness", "straightness", "betweenness")
 FIGURE_FILENAMES = ("degree_hist.png", *(f"{name}_ccdf.png" for name in NODE_MEASURES),
-                    "edge_betweenness_map.png", "redundancy_map.png", "critical_links_map.png")
+                    "edge_betweenness_map.png", "redundancy_map.png", "critical_links_map.png",
+                    "robustness_scc.png", "robustness_efficiency.png")
 
 
 def _critical_map_canvas(links):
@@ -91,3 +92,35 @@ def write_figures(nodes, links, folder):
     ax.set_axis_off()
     fig.savefig(folder / "critical_links_map.png", bbox_inches="tight", dpi=180)
     plt.close(fig)
+
+
+def write_robustness_figures(result, folder):
+    import matplotlib.pyplot as plt
+
+    folder.mkdir(exist_ok=True)
+    elements = [element for element in ("links", "nodes") if element in result.summary]
+    for measure, filename, ylabel in (
+        ("S_scc", "robustness_scc.png", "Largest strongly connected component / original N"),
+        ("E_rel", "robustness_efficiency.png", "Efficiency / baseline efficiency"),
+    ):
+        fig, axes = plt.subplots(1, len(elements), figsize=(6 * len(elements), 4), squeeze=False)
+        for ax, element in zip(axes[0], elements):
+            attack = [row for row in result.rows if row["element"] == element and row["mode"] == "attack"]
+            band = result.summary[element]["failure_band"]
+            fraction = [row["f"] for row in attack]
+            means = [np.nan if row[f"{measure}_mean"] is None else row[f"{measure}_mean"] for row in band]
+            lower = [np.nan if row[f"{measure}_p05"] is None else row[f"{measure}_p05"] for row in band]
+            upper = [np.nan if row[f"{measure}_p95"] is None else row[f"{measure}_p95"] for row in band]
+            ax.plot(fraction, [row[measure] for row in attack], color="tab:red", label="Targeted attack")
+            ax.plot(fraction, means, color="tab:blue", label="Random failure mean")
+            ax.fill_between(fraction, lower, upper, color="tab:blue", alpha=0.2, label="Failure 5-95% band")
+            if measure == "E_rel" and not np.isfinite(means).any():
+                ax.text(0.5, 0.5, "Efficiency undefined: baseline is zero", ha="center", transform=ax.transAxes)
+            ax.set(xlabel=f"Fraction of original {element} removed", ylabel=ylabel,
+                   xlim=(0, result.summary["parameters"]["f_max"]), ylim=(0, 1.05),
+                   title=f"{element.capitalize()}{' (headline)' if element == 'links' else ''}")
+            ax.grid(alpha=0.25)
+            ax.legend(fontsize="small")
+        fig.tight_layout()
+        fig.savefig(folder / filename, bbox_inches="tight", dpi=180)
+        plt.close(fig)

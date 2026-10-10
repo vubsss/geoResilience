@@ -41,7 +41,7 @@ class CleaningConfig(StrictModel):
 
 
 class AnalysisConfig(StrictModel):
-    seed: int = 42
+    seed: int = Field(default=42, ge=0)
     n_jobs: Annotated[int, Field(ge=1)] | Literal["auto"] = "auto"
     max_memory_gb: Annotated[float, Field(gt=0, allow_inf_nan=False)] | Literal["auto"] = "auto"
     directed_centrality: bool = False
@@ -62,12 +62,29 @@ class CriticalityConfig(StrictModel):
     all: bool = False
 
 
+class RobustnessConfig(StrictModel):
+    removal: list[Literal["links", "nodes"]] = Field(default_factory=lambda: ["links", "nodes"])
+    steps: int = Field(default=50, ge=1)
+    f_max: float = Field(default=0.20, gt=0, le=1, allow_inf_nan=False)
+    adaptive: bool = True
+    node_attack_metric: Literal["betweenness", "degree"] = "betweenness"
+    failure_runs: int = Field(default=10, ge=1)
+    efficiency_sources: int = Field(default=500, ge=1)
+
+    @model_validator(mode="after")
+    def validate_removal(self):
+        if not self.removal or len(set(self.removal)) != len(self.removal):
+            raise ValueError("robustness.removal must contain links, nodes, or both without duplicates")
+        return self
+
+
 class RunConfig(StrictModel):
     input: InputConfig
     network: NetworkConfig = Field(default_factory=NetworkConfig)
     cleaning: CleaningConfig = Field(default_factory=CleaningConfig)
     analysis: AnalysisConfig = Field(default_factory=AnalysisConfig)
     criticality: CriticalityConfig = Field(default_factory=CriticalityConfig)
+    robustness: RobustnessConfig = Field(default_factory=RobustnessConfig)
     output: OutputConfig = Field(default_factory=OutputConfig)
 
 

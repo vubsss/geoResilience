@@ -15,10 +15,11 @@ from . import __version__
 from .config import RunConfig
 from .centralities import centrality_report, compute_centralities
 from .criticality import compute_criticality, criticality_report
-from .figures import FIGURE_FILENAMES, write_figures
+from .figures import FIGURE_FILENAMES, write_figures, write_robustness_figures
 from .links import _link_rows
 from .network import cleaning_report, load_and_clean
 from .screening import redundancy_report, screen_network
+from .robustness import compute_robustness, robustness_report, write_curves
 
 
 def _versions():
@@ -48,7 +49,7 @@ def run(config: RunConfig, out_override: Path | None = None, overwrite: bool = F
         raise ValueError(f"output.dir exists and is not empty: {out_dir} (use --overwrite)")
     out_dir.mkdir(parents=True, exist_ok=True)
     if overwrite:
-        for name in ("network.gpkg", "summary.json", "report.txt", "run_config.yaml"):
+        for name in ("network.gpkg", "summary.json", "report.txt", "run_config.yaml", "robustness_curves.csv"):
             (out_dir / name).unlink(missing_ok=True)
         for name in FIGURE_FILENAMES:
             (out_dir / "figures" / name).unlink(missing_ok=True)
@@ -81,6 +82,12 @@ def run(config: RunConfig, out_override: Path | None = None, overwrite: bool = F
     statistics["information"] = criticality.information_summary
     statistics["runtime_seconds"].update(criticality.runtime_seconds)
     computation.update(criticality.computation)
+    robustness = compute_robustness(
+        graph, links, config.robustness, seed=config.analysis.seed, n_jobs=computation["n_jobs"],
+        budget_bytes=computation["memory_budget_bytes"])
+    statistics["robustness"] = robustness.summary
+    statistics["runtime_seconds"].update(robustness.runtime_seconds)
+    write_curves(robustness, out_dir / "robustness_curves.csv")
     n = len(analysis.node_ids)
     nodes = []
     for i, (node, data) in enumerate(graph.nodes(data=True)):
@@ -126,10 +133,12 @@ def run(config: RunConfig, out_override: Path | None = None, overwrite: bool = F
     lines.extend(["", *centrality_report(statistics, links)])
     lines.extend(["", *redundancy_report(screening.summary, links)])
     lines.extend(["", *criticality_report(criticality.summary, criticality.information_summary)])
+    lines.extend(["", *robustness_report(robustness.summary)])
     lines = [line.encode("ascii", "backslashreplace").decode() for line in lines]
     lines = [textwrap.fill(line, width=100) if len(line) > 100 else line for line in lines]
     (out_dir / "report.txt").write_text("\n".join(lines) + "\n")
     (out_dir / "run_config.yaml").write_text(yaml.safe_dump(_resolved_config(config, out_dir, computation), sort_keys=False))
     if config.output.figures:
         write_figures(nodes_gdf, links_gdf, out_dir / "figures")
+        write_robustness_figures(robustness, out_dir / "figures")
     return summary
