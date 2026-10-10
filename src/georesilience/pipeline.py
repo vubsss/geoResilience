@@ -1,5 +1,6 @@
 import json
 import platform
+import textwrap
 from collections import Counter
 from datetime import datetime, timezone
 from importlib.metadata import PackageNotFoundError, version
@@ -7,28 +8,14 @@ from pathlib import Path
 
 import geopandas as gpd
 import networkx as nx
-import osmnx as ox
 import yaml
 from pyproj import CRS
-from shapely.geometry import LineString, Point
+from shapely.geometry import Point
 
 from . import __version__
 from .config import RunConfig
-
-
-def _way_ids(value):
-    if value is None:
-        return []
-    values = value if isinstance(value, (list, tuple, set)) else [value]
-    return sorted({int(item) for item in values if item is not None})
-
-
-def _text(value):
-    if value is None:
-        return None
-    if isinstance(value, (list, tuple, set)):
-        return ";".join(map(str, value))
-    return str(value)
+from .links import _link_rows
+from .network import cleaning_report, load_and_clean
 
 
 def _versions():
@@ -39,34 +26,6 @@ def _versions():
         except PackageNotFoundError:
             result[package] = "not installed"
     return result
-
-
-def _link_rows(graph):
-    groups = {}
-    for u, v, key, data in graph.edges(keys=True, data=True):
-        ways = _way_ids(data.get("osmid"))
-        length = float(data.get("length", 0.0))
-        pair = frozenset((u, v))
-        group_key = (pair, tuple(ways), round(length, 1))
-        groups.setdefault(group_key, []).append((u, v, key, data))
-    rows = []
-    for link_id, edges in enumerate(groups.values()):
-        u, v, _, data = edges[0]
-        loop = u == v
-        geometry = data.get("geometry")
-        if geometry is None:
-            geometry = LineString([(graph.nodes[u]["x"], graph.nodes[u]["y"]),
-                                   (graph.nodes[v]["x"], graph.nodes[v]["y"])])
-        rows.append({
-            "link_id": link_id, "u": str(u), "v": str(v), "_u": u, "_v": v,
-            "osm_way_ids": ",".join(map(str, _way_ids(
-                [way for _, _, _, edge in edges for way in _way_ids(edge.get("osmid"))]
-            ))),
-            "name": _text(data.get("name")), "highway": _text(data.get("highway")),
-            "length_m": float(data.get("length", 0.0)), "oneway": len(edges) == 1,
-            "is_self_loop": loop, "geometry": geometry,
-        })
-    return rows
 
 
 def _resolved_config(config, out_dir):
@@ -90,15 +49,7 @@ def run(config: RunConfig, out_override: Path | None = None, overwrite: bool = F
             figure.parent.rmdir()
         except OSError:
             pass
-    input_path = config.input.path
-    if not input_path.is_absolute():
-        input_path = input_path.resolve()
-    if not input_path.is_file():
-        raise ValueError(f"input.path does not exist: {input_path}")
-    graph = ox.load_graphml(filepath=input_path)
-    if graph.graph.get("simplified") is not True:
-        graph = ox.simplify_graph(graph)
-    graph = ox.project_graph(graph)
+    graph, input_meta, cleaning = load_and_clean(config)
 
     links = _link_rows(graph)
     analysis = nx.Graph()
@@ -125,20 +76,26 @@ def run(config: RunConfig, out_override: Path | None = None, overwrite: bool = F
     summary = {
         "meta": {"package_version": __version__,
                  "timestamp_utc": datetime.now(timezone.utc).isoformat(),
-                 "input": {"source": config.input.source, "path": str(input_path)},
+                 **input_meta,
                  "crs_epsg": CRS.from_user_input(crs).to_epsg(),
                  "node_count": len(graph), "link_count": len(links),
                  "directed_edge_count": graph.number_of_edges()},
+        "cleaning": cleaning,
         "metrics": {"degree": {"mean": sum(degree.values()) / n if n else 0,
                                  "max": max(degree.values(), default=0),
                                  "histogram": histogram}},
     }
     (out_dir / "summary.json").write_text(json.dumps(summary, indent=2) + "\n")
-    lines = [f"GeoResilience {__version__}", f"Input: {input_path}",
+    lines = [f"GeoResilience {__version__}", f"Input: {summary['meta']['input']}",
              f"UTC: {summary['meta']['timestamp_utc']}", "", "Network",
              f"Nodes: {len(graph)}", f"Links: {len(links)}",
-             f"Directed edges: {graph.number_of_edges()}", "", "Degree", "degree: count"]
+             f"Directed edges: {graph.number_of_edges()}",
+             f"Network type requested: {config.network.type}",
+             f"Network type applied: {summary['meta']['network_type_applied']}",
+             "", *cleaning_report(cleaning), "", "Degree", "degree: count"]
     lines.extend(f"{key}: {value}" for key, value in histogram.items())
+    lines = [line.encode("ascii", "backslashreplace").decode() for line in lines]
+    lines = [textwrap.fill(line, width=100) if len(line) > 100 else line for line in lines]
     (out_dir / "report.txt").write_text("\n".join(lines) + "\n")
     (out_dir / "run_config.yaml").write_text(yaml.safe_dump(_resolved_config(config, out_dir), sort_keys=False))
     if config.output.figures:

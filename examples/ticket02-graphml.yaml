@@ -1,0 +1,11 @@
+input:
+  source: graphml
+  path: data/ticket02-demo/junction.graphml
+network:
+  type: drive
+cleaning:
+  consolidate: true
+  tolerance_m: 15
+output:
+  dir: results/ticket02-graphml
+  figures: true

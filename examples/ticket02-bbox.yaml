@@ -1,0 +1,11 @@
+input:
+  source: bbox
+  bbox: [78.469, 17.399, 78.479, 17.409]
+network:
+  type: drive
+cleaning:
+  consolidate: true
+  tolerance_m: 15
+output:
+  dir: results/ticket02-bbox
+  figures: true
