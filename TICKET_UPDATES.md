@@ -1,8 +1,8 @@
 # Ticket implementation status
 
 - [x] **01 — Tracer bullet: config → graph → degree → outputs** — implemented. See [ticket](plan/tickets/01-tracer-bullet.md).
-- [x] **02 — All inputs + full cleaning** — implemented and tested; awaiting your manual review.
-- [ ] **03 — Exact path-based centralities** — not started.
+- [x] **02 — All inputs + full cleaning** — completed, tested and manually verified by you.
+- [x] **03 — Exact path-based centralities** — completed, tested and manually verified by you.
 - [ ] **04 — Screening and candidates** — not started.
 - [ ] **05 — Single-link criticality + information centrality** — not started.
 - [ ] **06 — Attack vs failure curves** — not started.
@@ -28,8 +28,8 @@
 
 ## Ticket 02 — All inputs + full cleaning
 
-Current ticket: **02**, implemented on **10 October 2026**, awaiting your manual review.
-Tickets 03–16 have not been started.
+Ticket **02** was implemented on **10 October 2026** and is **completed and manually verified
+by you**, as confirmed on **10 October 2026**.
 
 ### Changes
 
@@ -118,3 +118,124 @@ georesilience run --config results/ticket02-graphml/run_config.yaml --out result
 - The generated demo inputs are in `data/ticket02-demo/`, and outputs are in
   `results/ticket02-graphml/` and `results/ticket02-xml/`. These generated files are gitignored;
   regenerate them with the example script when needed.
+
+## Ticket 03 — Exact path-based centralities
+
+Ticket **03** was implemented on **10 October 2026** and is **completed and manually verified
+by you**, as confirmed on **10 October 2026**.
+Tickets 04–16 have not been started.
+
+### Changes
+
+- Added exact metric **closeness, straightness, node betweenness and physical-link edge
+  betweenness**, plus **global efficiency**, on the cleaned undirected node set.
+- Added a minimum-length analysis graph shared by shortest paths and betweenness. For each
+  endpoint pair, the shortest physical link supplies the analysis edge; equal-length ties use
+  the lowest `link_id`. Unselected parallel links get 0; self-loops retain null edge betweenness
+  and are excluded from analyses and statistics.
+- Added the reusable CSR shortest-path engine with source subsets, reducers, directed/cutoff
+  support, memory-based row chunks, joblib process workers, and a dense-matrix fit helper.
+  Workers return reduced vectors rather than distance blocks. Closeness, straightness and
+  inverse-distance contributions share one pass. Optional node weights are supported by the
+  reducer/efficiency aggregator for later population work; the current CLI uses uniform weights.
+- Added exact weighted NetworKit betweenness, with its raw ordered-pair counts normalized to the
+  ticket definitions. NetworKit threads follow `analysis.n_jobs`. Positive finite non-loop
+  lengths are validated before computation.
+- Resolved resource settings from `SLURM_CPUS_PER_TASK`/CPU count and half of available RAM when
+  `auto` is selected. Numeric memory values use GiB. Recorded effective settings, budget bytes,
+  chunk rows and chunk count. Resolved configs retain reusable resource choices.
+- Added the new GPKG columns, mean/median/p90/max summary statistics, stage runtimes, a report
+  section and top 20 links table. Added three log-y empirical CCDFs and the edge-betweenness map.
+  Overwriting a run with figures disabled removes this ticket's old figures as well.
+- Added timestamped progress for shortest-path chunks and a heartbeat during long betweenness
+  computations. `analysis.directed_centrality: true` raises `NotImplementedError` in the library
+  and a clear CLI error before output files can be changed.
+- Added known-answer demo graphs, matching input GeoPackages for QGIS, example configs, formula
+  documentation, correctness/cross-reference tests and the opt-in 60,000-node benchmark.
+
+### Formula check against the papers
+
+Read page 2 of [AP2 — Centrality measures in urban networks](papers/AP2-centrality_measures_in_urban_networks.pdf).
+Closeness, straightness and ordered-pair node betweenness match its definitions. **Global efficiency
+follows the explicit Ticket 03 formula `mean(1/d)`**, measured in 1/metres. AP2 instead uses spatial
+efficiency `mean(d_E/d)` in its information-centrality definition. This distinction is documented
+in README; the ticket takes precedence as specified by the project design. No information
+centrality calculation has been added in this ticket.
+
+Convention note for later tickets: both means exclude self-pairs and use the denominator
+`N * (N - 1)`; unreachable pairs contribute zero. Here `d` is shortest-path length and `d_E`
+is straight-line distance between projected node coordinates. Ticket 03's efficiency has units
+of **1/metres**, while AP2's spatial efficiency is **dimensionless**. They are different measures;
+future information-centrality work and comparisons with AP2 must state which convention is used.
+
+### Manual run and QGIS checks
+
+From the repository root, activate your project environment. The existing temporary verification
+environment can be used while available:
+
+```sh
+source /tmp/georesilience-ticket02-venv/bin/activate
+python examples/create_ticket03_demo.py
+georesilience run --config examples/ticket03-star.yaml --overwrite
+georesilience run --config examples/ticket03-grid.yaml --overwrite
+georesilience run --config examples/ticket03-path.yaml --overwrite
+PYTHONPATH= PYTEST_DISABLE_PLUGIN_AUTOLOAD=1 python -m pytest
+```
+
+For a fresh environment, follow the install instructions in [README.md](README.md).
+The pytest flags isolate this machine's unrelated ROS plugins, as in ticket 02.
+
+All three fixtures use **100 m roads**. Input GraphML fixtures are explicitly marked simplified
+so that their known graph nodes survive loading. Consolidation is enabled, but their spacing
+means no nodes are merged.
+
+| Fixture | Expected result |
+| --- | --- |
+| Star, 5 nodes / 4 links | Hub `betweenness=1`; four leaves `betweenness=0` |
+| Star | All four links `edge_betweenness=0.4` |
+| Star | Hub `closeness=0.01`; leaf `closeness=4/700 ≈ 0.005714285714` |
+| Star | Hub `straightness=1`; leaves approximately `0.853553390593` |
+| Star | `summary.json.metrics.global_efficiency=0.007` |
+| Grid, 9 nodes / 12 links | Centre (degree 4) `closeness=8/1200 ≈ 0.006666666667` |
+| Collinear path, 5 nodes / 4 links | Every node `straightness=1` |
+
+1. Open `results/ticket03-star/network.gpkg` in QGIS. Check the `nodes` attribute table for the
+   three new columns and the `edges` table for `edge_betweenness`. Use **Graduated** symbology to
+   colour nodes by `betweenness` or roads by `edge_betweenness`.
+2. For original inputs, open `data/ticket03-demo/star-input.gpkg`, `grid-input.gpkg` or
+   `path-input.gpkg`. Their edges include both travel directions, while output edges are physical
+   links. Their geometry should match the respective outputs because no junctions merge here.
+3. Inspect each run's `report.txt`, including "Centralities" and "Top 20 links by edge betweenness".
+   Check `summary.json.metrics` and `summary.json.computation`. Runtimes can change on reruns.
+4. Open `figures/closeness_ccdf.png`, `straightness_ccdf.png`, `betweenness_ccdf.png`, and
+   `edge_betweenness_map.png`. Star links have equal importance, so their map colours/widths match.
+5. For your own graph, reuse an existing ticket 02 config and select a new output folder with
+   `--out results/my-centralities`. Existing ticket 02 inputs now gain the centrality columns.
+6. To compare resource choices, copy a demo config and try `n_jobs: 4` with
+   `max_memory_gb: 0.000001`, writing to a different output folder. Metric values should agree
+   with the default example within floating-point tolerance; chunk counts/times may differ.
+
+### Verification results
+
+- Known answers: collinear path straightness, star betweenness, unit-grid centre closeness and
+  two-node efficiency all passed.
+- Five independent 200-node random spatial graphs matched NetworkX closeness, node and edge
+  betweenness, and Floyd–Warshall efficiency within **1e-9**. Straightness was independently
+  cross-checked as well. One versus four jobs and small versus large budgets agreed within
+  **1e-12**.
+- GPKG columns/null self-loops, JSON summaries, ASCII report/top links, all five figures,
+  resolved settings, directed-flag errors and figure cleanup were verified.
+- **60,000-node perturbed grid benchmark passed:** 8 jobs; **2 GiB** block budget;
+  **260.03 seconds** total; **2.27 GiB** combined parent/worker peak RSS, below the **3 GiB** cap.
+  Shortest paths took **61.24 s** and exact betweenness **198.53 s**. Fixture creation is excluded
+  from timing; output writing/plotting are tested separately. Performance depends on hardware.
+- The star, grid and path example CLI runs succeeded and produced the expected attribute values.
+- Final regular suite: **36 passed, 4 skipped** (three live-network tests and the slow benchmark
+  are opt-in). The benchmark was run separately and passed. `git diff --check` passed.
+  Verification used Python **3.13.3**, SciPy **1.18.1** and NetworKit **11.2.2**.
+
+The benchmark is skipped by default. To reproduce it (allow several minutes):
+
+```sh
+PYTHONPATH= PYTEST_DISABLE_PLUGIN_AUTOLOAD=1 python -m pytest --slow -m slow -s
+```

@@ -1,0 +1,12 @@
+input:
+  source: graphml
+  path: data/ticket03-demo/grid.graphml
+cleaning:
+  consolidate: true
+  tolerance_m: 15
+analysis:
+  n_jobs: 4
+  max_memory_gb: 0.1
+output:
+  dir: results/ticket03-grid
+  figures: true

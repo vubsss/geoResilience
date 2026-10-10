@@ -1,0 +1,13 @@
+input:
+  source: graphml
+  path: data/ticket03-demo/star.graphml
+cleaning:
+  consolidate: true
+  tolerance_m: 15
+analysis:
+  n_jobs: 1
+  max_memory_gb: 0.1
+  directed_centrality: false
+output:
+  dir: results/ticket03-star
+  figures: true

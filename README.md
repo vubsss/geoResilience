@@ -1,7 +1,7 @@
 # GeoResilience
 
-GeoResilience analyzes road network structure and resilience. Tickets 01 and 02 provide input,
-cleaning, physical road links, degree metrics, and auditable outputs. Later analysis tickets are
+GeoResilience analyzes road network structure and resilience. Tickets 01–03 provide input,
+cleaning, physical road links, exact centrality metrics, and auditable outputs. Later analysis tickets are
 tracked in [TICKET_UPDATES.md](TICKET_UPDATES.md).
 
 Install with Python 3.10 or newer:
@@ -147,7 +147,7 @@ Non-empty output folders require `--overwrite`. The command writes:
 
 | File | Contents |
 | --- | --- |
-| `network.gpkg` | Projected `nodes` and physical-link `edges` layers; degree metrics on nodes |
+| `network.gpkg` | Projected `nodes` and physical-link `edges` layers; degree and centrality metrics |
 | `summary.json` | Input, CRS, download time, applied type, boundary, cleaning counts and metrics |
 | `report.txt` | ASCII network summary, cleaning table, component losses, warnings, degree histogram |
 | `run_config.yaml` | Resolved defaults and package versions; reusable as a run config |
@@ -199,3 +199,114 @@ If your shell loads ROS or other unrelated pytest plugins, isolate the test comm
 ```sh
 PYTHONPATH= PYTEST_DISABLE_PLUGIN_AUTOLOAD=1 python -m pytest
 ```
+
+## Exact centralities (ticket 03)
+
+Every run now computes centralities on the cleaned **undirected** graph, using lengths in metres.
+Both travel directions count as one connection. For parallel links between the same two nodes,
+analysis uses the shortest link; an equal-length tie goes to the lowest `link_id`. Longer links
+and unselected ties have edge betweenness 0. Self-loop links remain in the GPKG with null edge
+betweenness and do not enter any centrality calculation.
+
+| Measure | Meaning | Units |
+| --- | --- | --- |
+| `closeness` | `(N - 1) / sum(shortest-path distances to other nodes)` | 1/metres |
+| `straightness` | Mean of straight-line distance / shortest-path distance to other nodes | Dimensionless |
+| `betweenness` | Fraction of other ordered node pairs' shortest paths passing through a node | Dimensionless |
+| `edge_betweenness` | Fraction of unordered node pairs' shortest paths using the selected link | Dimensionless |
+| `global_efficiency` | Mean of `1 / shortest-path distance` over ordered distinct node pairs | 1/metres |
+
+Tied shortest paths split betweenness equally. Node betweenness excludes the two endpoints;
+edge betweenness includes them. Unreachable pairs contribute zero to efficiency and straightness.
+Ordinary closeness is zero if a target is unreachable; the production pipeline retains a strongly
+connected component before these calculations. Single-node centralities and efficiency are zero.
+Finite, positive lengths are required on non-self-loop links. Straightness is calculated from the
+supplied lengths without clipping values; meaningful physical lengths should be at least their
+endpoint straight-line distance.
+
+Closeness, straightness and node betweenness follow the supplied
+[Crucitti, Latora & Porta paper](papers/AP2-centrality_measures_in_urban_networks.pdf), page 2.
+**Efficiency follows Ticket 03:** reciprocal path length `1/d`, rather than the paper's spatial
+efficiency `d_E/d`. Its value therefore depends on the distance unit and is not constrained to 0–1.
+This distinction is intentional and follows the ticket's explicit formula.
+
+The `nodes` GPKG layer adds `closeness`, `straightness` and `betweenness`; `edges` adds
+`edge_betweenness`. `summary.json.metrics` adds mean, median, p90 and maximum for each measure,
+`global_efficiency`, and `runtime_seconds` for graph preparation, shortest paths, betweenness and
+total centrality computation. Runtime values will vary between repeated runs. `report.txt` adds
+these statistics and the top 20 links by edge betweenness, including road names and OSM way IDs.
+
+With `output.figures: true`, `figures/` also contains:
+
+- `closeness_ccdf.png`, `straightness_ccdf.png`, `betweenness_ccdf.png`: empirical complementary
+  cumulative distributions, showing the fraction of nodes with value at least x, on a log-y axis.
+- `edge_betweenness_map.png`: grey road base with a viridis overlay, and thicker strokes for
+  higher edge-betweenness quantiles.
+
+### Memory and parallel execution
+
+```yaml
+analysis:
+  n_jobs: 4
+  max_memory_gb: 2
+  directed_centrality: false
+```
+
+`n_jobs: auto` uses `SLURM_CPUS_PER_TASK` when set, otherwise the CPU count.
+`max_memory_gb: auto` uses half the currently available RAM; numeric budgets use GiB (1024³ bytes).
+Effective settings are recorded in `summary.json.computation` and resolved in `run_config.yaml`.
+The summary also records exact budget bytes, the permitted chunk rows and the number of chunks.
+
+The shortest-path engine reserves three float64 blocks per worker and uses
+`max(1, floor(budget_bytes / (N * 8 * 3 * n_jobs)))` rows per chunk. It computes shortest paths,
+straightness and efficiency contributions together, then returns only reduced values from each
+joblib worker. A whole distance matrix is never cached. One chunk is the minimum even if the
+configured budget is smaller than one row's workspace; Python, graph and worker overhead are
+additional to the block budget. NetworKit computes exact weighted node and edge betweenness with
+`n_jobs` threads. A single-chunk shortest-path calculation avoids launching worker processes.
+
+The reusable `ShortestPathEngine.reduce(sources, reducer, directed=False, limit=...)` supports
+source subsets, cutoffs and directed CSR graphs for later tickets. Reducers receive a distance
+block and its source indices; they may mutate the block and must return reduced results.
+`engine.fits_in_memory(N, dtype)` checks whether one dense N×N array would fit. The centrality
+reducer and efficiency aggregator accept optional nonnegative node weights for later population
+work; the current CLI uses uniform weights. `analysis.directed_centrality: true` raises
+`NotImplementedError` in the library and a clear nonzero CLI error because directed centralities
+are deferred.
+
+### Run and test ticket 03
+
+```sh
+python examples/create_ticket03_demo.py
+georesilience run --config examples/ticket03-star.yaml --overwrite
+georesilience run --config examples/ticket03-grid.yaml --overwrite
+georesilience run --config examples/ticket03-path.yaml --overwrite
+PYTHONPATH= PYTEST_DISABLE_PLUGIN_AUTOLOAD=1 python -m pytest
+```
+
+All demo roads are 100 m long. Expected values:
+
+| Demo | Manual check |
+| --- | --- |
+| Star | Hub betweenness **1**, leaves **0**; every link's edge betweenness **0.4** |
+| Star | Hub closeness **0.01**, leaf closeness **4/700 ≈ 0.00571429**; efficiency **0.007** |
+| Grid | Centre closeness **8/1200 ≈ 0.00666667** |
+| Collinear path | Straightness **1** at all five nodes |
+
+The generator also exports `star-input.gpkg`, `grid-input.gpkg` and `path-input.gpkg` under
+`data/ticket03-demo/` for QGIS. Open the corresponding `results/ticket03-*/network.gpkg` output,
+inspect both attribute tables, and use **Graduated** symbology on `betweenness` for nodes or
+`edge_betweenness` for links. In the star, all roads have equal edge betweenness, so equal colours
+and widths are expected. Inspect the PNGs and the report's top-links table as well.
+
+The expensive benchmark is skipped by default. To run the 60,000-node perturbed grid with
+8 jobs and a 2 GiB block budget:
+
+```sh
+PYTHONPATH= PYTEST_DISABLE_PLUGIN_AUTOLOAD=1 python -m pytest --slow -m slow -s
+```
+
+It measures centrality computation and the combined parent/worker peak RSS, asserting less than
+10 minutes and at most budget + 1 GiB. Input-fixture generation is outside the timed interval;
+file export and plotting are tested separately. Runtime is hardware-dependent. Live source tests
+remain opt-in with `--network`.

@@ -5,9 +5,14 @@ import requests
 
 def pytest_addoption(parser):
     parser.addoption("--network", action="store_true", help="Run tests that contact OSM services")
+    parser.addoption("--slow", action="store_true", help="Run expensive performance benchmarks")
 
 
 def pytest_collection_modifyitems(config, items):
+    if not config.getoption("--slow"):
+        for item in items:
+            if item.get_closest_marker("slow"):
+                item.add_marker(pytest.mark.skip(reason="requires --slow"))
     if not config.getoption("--network"):
         for item in items:
             if item.get_closest_marker("network"):

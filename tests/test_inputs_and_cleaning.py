@@ -139,6 +139,9 @@ def test_scc_report_and_gpkg_agree(tmp_path):
     repeat = run(resolved, out_override=tmp_path / "repeat")
     summary["meta"].pop("timestamp_utc")
     repeat["meta"].pop("timestamp_utc")
+    # Runtime measurements vary between runs; metric values must reproduce.
+    summary["metrics"].pop("runtime_seconds")
+    repeat["metrics"].pop("runtime_seconds")
     assert summary == repeat
 
 

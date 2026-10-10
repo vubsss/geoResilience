@@ -1,5 +1,5 @@
 from pathlib import Path
-from typing import Literal
+from typing import Annotated, Literal
 
 import yaml
 from pydantic import BaseModel, ConfigDict, Field, ValidationError, model_validator
@@ -42,8 +42,8 @@ class CleaningConfig(StrictModel):
 
 class AnalysisConfig(StrictModel):
     seed: int = 42
-    n_jobs: int | Literal["auto"] = "auto"
-    max_memory_gb: float | Literal["auto"] = "auto"
+    n_jobs: Annotated[int, Field(ge=1)] | Literal["auto"] = "auto"
+    max_memory_gb: Annotated[float, Field(gt=0, allow_inf_nan=False)] | Literal["auto"] = "auto"
     directed_centrality: bool = False
     directed_removal: bool = True
 

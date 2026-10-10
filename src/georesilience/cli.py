@@ -18,7 +18,7 @@ def main(argv=None):
     args = parser.parse_args(argv)
     try:
         run(load_config(args.config), args.out, args.overwrite)
-    except (ValueError, OSError) as exc:
+    except (ValueError, OSError, NotImplementedError) as exc:
         print(f"georesilience: {exc}", file=sys.stderr, flush=True)
         return 2
     return 0

@@ -7,13 +7,14 @@ from importlib.metadata import PackageNotFoundError, version
 from pathlib import Path
 
 import geopandas as gpd
-import networkx as nx
 import yaml
 from pyproj import CRS
 from shapely.geometry import Point
 
 from . import __version__
 from .config import RunConfig
+from .centralities import centrality_report, compute_centralities
+from .figures import FIGURE_FILENAMES, write_figures
 from .links import _link_rows
 from .network import cleaning_report, load_and_clean
 
@@ -28,14 +29,18 @@ def _versions():
     return result
 
 
-def _resolved_config(config, out_dir):
+def _resolved_config(config, out_dir, computation):
     values = config.model_dump(mode="json")
     values["output"]["dir"] = str(out_dir)
+    values["analysis"]["n_jobs"] = computation["n_jobs"]
+    values["analysis"]["max_memory_gb"] = computation["max_memory_gb"]
     values["versions"] = _versions()
     return values
 
 
 def run(config: RunConfig, out_override: Path | None = None, overwrite: bool = False):
+    if config.analysis.directed_centrality:
+        raise NotImplementedError("analysis.directed_centrality: true is planned; use false for Ticket 03")
     out_dir = out_override or config.output.dir
     if out_dir.exists() and any(out_dir.iterdir()) and not overwrite:
         raise ValueError(f"output.dir exists and is not empty: {out_dir} (use --overwrite)")
@@ -43,33 +48,35 @@ def run(config: RunConfig, out_override: Path | None = None, overwrite: bool = F
     if overwrite:
         for name in ("network.gpkg", "summary.json", "report.txt", "run_config.yaml"):
             (out_dir / name).unlink(missing_ok=True)
-        figure = out_dir / "figures" / "degree_hist.png"
-        figure.unlink(missing_ok=True)
+        for name in FIGURE_FILENAMES:
+            (out_dir / "figures" / name).unlink(missing_ok=True)
         try:
-            figure.parent.rmdir()
+            (out_dir / "figures").rmdir()
         except OSError:
             pass
     graph, input_meta, cleaning = load_and_clean(config)
 
     links = _link_rows(graph)
-    analysis = nx.Graph()
-    analysis.add_nodes_from(graph.nodes)
+    analysis, node_metrics, edge_scores, statistics, computation = compute_centralities(
+        graph, links, config.analysis)
+    degree = dict(zip(analysis.node_ids, map(int, analysis.csr.indptr[1:] - analysis.csr.indptr[:-1])))
     for row in links:
-        if row["_u"] != row["_v"]:
-            analysis.add_edge(row["_u"], row["_v"])
-    degree = dict(analysis.degree())
-    n = len(analysis)
+        row["edge_betweenness"] = edge_scores[row["link_id"]]
+    n = len(analysis.node_ids)
     nodes = []
-    for node, data in graph.nodes(data=True):
+    for i, (node, data) in enumerate(graph.nodes(data=True)):
         d = degree[node]
         nodes.append({"node_id": str(node), "x": data["x"], "y": data["y"],
                       "degree": d, "degree_centrality": d / (n - 1) if n > 1 else 0.0,
+                      **{name: float(values[i]) for name, values in node_metrics.items()},
                       "geometry": Point(data["x"], data["y"])})
     crs = graph.graph.get("crs", "EPSG:4326")
-    gpd.GeoDataFrame(nodes, geometry="geometry", crs=crs).to_file(
+    nodes_gdf = gpd.GeoDataFrame(nodes, geometry="geometry", crs=crs)
+    nodes_gdf.to_file(
         out_dir / "network.gpkg", layer="nodes", driver="GPKG", engine="pyogrio")
     gpkg_links = [{key: value for key, value in row.items() if not key.startswith("_")} for row in links]
-    gpd.GeoDataFrame(gpkg_links, geometry="geometry", crs=crs).to_file(
+    links_gdf = gpd.GeoDataFrame(gpkg_links, geometry="geometry", crs=crs)
+    links_gdf.to_file(
         out_dir / "network.gpkg", layer="edges", driver="GPKG", engine="pyogrio", mode="a")
 
     histogram = dict(sorted(Counter(degree.values()).items()))
@@ -81,9 +88,10 @@ def run(config: RunConfig, out_override: Path | None = None, overwrite: bool = F
                  "node_count": len(graph), "link_count": len(links),
                  "directed_edge_count": graph.number_of_edges()},
         "cleaning": cleaning,
+        "computation": computation,
         "metrics": {"degree": {"mean": sum(degree.values()) / n if n else 0,
                                  "max": max(degree.values(), default=0),
-                                 "histogram": histogram}},
+                                 "histogram": histogram}, **statistics},
     }
     (out_dir / "summary.json").write_text(json.dumps(summary, indent=2) + "\n")
     lines = [f"GeoResilience {__version__}", f"Input: {summary['meta']['input']}",
@@ -94,17 +102,11 @@ def run(config: RunConfig, out_override: Path | None = None, overwrite: bool = F
              f"Network type applied: {summary['meta']['network_type_applied']}",
              "", *cleaning_report(cleaning), "", "Degree", "degree: count"]
     lines.extend(f"{key}: {value}" for key, value in histogram.items())
+    lines.extend(["", *centrality_report(statistics, links)])
     lines = [line.encode("ascii", "backslashreplace").decode() for line in lines]
     lines = [textwrap.fill(line, width=100) if len(line) > 100 else line for line in lines]
     (out_dir / "report.txt").write_text("\n".join(lines) + "\n")
-    (out_dir / "run_config.yaml").write_text(yaml.safe_dump(_resolved_config(config, out_dir), sort_keys=False))
+    (out_dir / "run_config.yaml").write_text(yaml.safe_dump(_resolved_config(config, out_dir, computation), sort_keys=False))
     if config.output.figures:
-        import matplotlib.pyplot as plt
-        figure_dir = out_dir / "figures"
-        figure_dir.mkdir(exist_ok=True)
-        plt.hist(list(degree.values()), bins=range(max(degree.values(), default=0) + 2), align="left")
-        plt.xlabel("Degree")
-        plt.ylabel("Node count")
-        plt.savefig(figure_dir / "degree_hist.png", bbox_inches="tight")
-        plt.close()
+        write_figures(nodes_gdf, links_gdf, out_dir / "figures")
     return summary
