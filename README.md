@@ -1,9 +1,9 @@
 # GeoResilience
 
-GeoResilience analyzes road network structure and resilience. Tickets 01–07 provide input,
+GeoResilience analyzes road network structure and resilience. Tickets 01–08 provide input,
 cleaning, physical road links, exact centralities, redundancy screening, single-road damage,
 information centrality, cumulative attack/failure experiments, distribution classification,
-and auditable outputs. Later analysis tickets are
+per-event road failure probabilities, and auditable outputs. Later analysis tickets are
 tracked in [TICKET_UPDATES.md](TICKET_UPDATES.md).
 
 Install with Python 3.10 or newer:
@@ -91,6 +91,10 @@ robustness:
   node_attack_metric: betweenness
   failure_runs: 10
   efficiency_sources: 500
+reliability:
+  p_fail_csv: null
+  p0: 0.01
+  p0_sweep: [0.001, 0.01, 0.05]
 output:
   dir: results/
   figures: true
@@ -848,3 +852,210 @@ goodness-of-fit analysis is not implemented. Centrality observations share a gra
 dependent, so nominal p-values require caution. Numerical fitting warnings remain in the JSON.
 Inconclusive outcomes are counted separately rather than presented as errors or silently dropped.
 The benchmark reports agreement, not general classification accuracy for cities.
+
+## Failure probabilities (ticket 08)
+
+Every run assigns each non-self-loop **physical link** a `p_fail`: the probability it is closed
+during **one event/scenario**, not an annual failure rate. CSV values are user-supplied scenario
+inputs; the fallback is a length proxy. **No road-class failure table is shipped.** Earthquake
+and flood hazard presets are future work. Synthetic demo probabilities are not calibrated risks.
+
+### Export, fill and import a template
+
+```sh
+georesilience template --config my.yaml --out p_fail_template.csv
+```
+
+This runs loading and cleaning only, without centralities or removal experiments, and writes
+one row per distinct OSM way ID on a non-self-loop physical link. It refuses an existing file
+unless `--overwrite` is supplied. Export with the same input and cleaning settings as your run.
+The Python function `georesilience.failure_probabilities.export_edge_template(G)` returns
+commented CSV text for a cleaned graph; its optional second argument writes that text to a path.
+
+Columns are `osm_way_id,name,highway,length_m,n_links,p_fail`. Fill `p_fail` with probabilities
+in `[0,1]`, or leave it blank for the proxy. Zero is an explicit supplied probability. Only
+`osm_way_id` and `p_fail` are required when importing; metadata columns are ignored. OSM way
+IDs are parsed as integers without conversion through floating point. CSV comments use `#`.
+
+`length_m` sums each containing physical link's length divided by its number of distinct ways;
+`n_links` counts containing physical links, including separate parallel roads. Reciprocal edges
+count once. **This is an equal-share approximation:** simplification does not retain original
+per-way lengths. A way shared by several links has one template row and its supplied probability
+is reused on each containing link. Links without OSM way IDs use the full length proxy.
+
+Point your YAML at the filled CSV, then run the usual analysis:
+
+```yaml
+reliability:
+  p_fail_csv: p_fail_template.csv
+  p0: 0.01
+  p0_sweep: [0.001, 0.01, 0.05]
+```
+
+```sh
+georesilience run --config my.yaml --overwrite
+```
+
+Paths are relative to the working directory. Invalid/nonfinite probabilities, values outside
+`[0,1]`, malformed IDs and duplicate IDs stop the run before centrality computation. Messages
+identify **one-based data rows** after the CSV header; comment and empty lines do not count.
+Unknown IDs and blank probabilities generate warnings; unknown values are excluded and blanks
+use the proxy. Reports and summaries retain up to 20 CSV warning messages plus total/omitted
+counts. An unknown row with a blank value contributes both warnings.
+
+### Combination and sensitivity
+
+For distinct ways `W`, supplied ways `C`, uncovered fraction `s = (|W|-|C|)/|W|`, and length `L`
+in kilometres:
+
+```text
+p_link = 1 - product(1 - p_w for w in C) * (1 - p0) ** (L * s)
+```
+
+This is the ticket's **any-part-fails** combination, assuming independent part failures.
+Without supplied values, it becomes `1 - (1-p0)**L`. All supplied ways give source `user`, none
+give `proxy`, and partial coverage gives `mixed`. Both directions of a physical link share the
+same probability and constitute a single closure unit. Self-loops receive null probability and
+source and are excluded from templates and coverage. Tiny probabilities are computed using
+`log1p`/`expm1` to avoid cancellation, with explicit handling of probabilities 0 and 1.
+
+The primary `p0` supplies exported probabilities. The sweep is sorted, deduplicated and always
+includes that primary value; every entry must be finite and in `[0,1]`. No failure simulations
+are performed by this stage. Tickets 09/10 will consume these probabilities; Ticket 06's existing
+fraction-based removal experiments retain their own definition.
+`probabilities_at_p0(links, user_probabilities, p0)` returns probabilities keyed by non-self-loop
+`link_id`, so later stages can reuse the inputs for each sweep without reloading the CSV.
+
+### Outputs and coverage
+
+- `network.gpkg`, `edges`: `p_fail`, `p_fail_source` for the primary `p0`.
+- `summary.json.reliability.coverage`: `by_source` counts, kilometres, link percentages and length
+  percentages for user/mixed/proxy; total non-self-loop links/length; unmatched-ID count; `p0`
+  and `p0_sweep`.
+- `user_length_km/pct` and `proxy_length_km/pct` measure effective supplied/uncovered length,
+  splitting mixed links equally among their ways. The source table instead counts each entire
+  link in one category. These two views are deliberately distinct.
+- `summary.json.reliability.warnings`: total, shown messages, omitted count and blank-value count.
+- `report.txt`: **Failure probabilities** section, source table, effective coverage and warnings.
+  If effective user-length coverage is nonzero but below 50%, the proxy-length warning includes
+  uncovered shares of mixed roads. At zero coverage the table shows full proxy use; at exactly
+  50% the additional warning is omitted, following the ticket threshold.
+- `run_config.yaml`: resolved reliability settings, including the primary value in the sweep.
+
+### How to read the Failure probabilities report
+
+Start with the **Failure probabilities** section of `report.txt`. Its percentages describe
+**input-data coverage**. Individual road closure probabilities are in the GeoPackage's `edges`
+layer as `p_fail`; multiply a value by 100 to express its per-event probability as a percentage.
+For example, `p_fail = 0.098746882` means about **9.87% per event**. The source label `user`
+means a probability was supplied in the CSV; it does not establish that it was measured or
+calibrated. A supplied zero is valid user coverage, while a blank falls back to the proxy.
+
+**Network and source counts:** the three default spatial cases contain the same **200 nodes,
+1,046 physical links and approximately 537.221 km**. Their 2,092 directed edges represent
+two directions for each physical road. Failure coverage counts those roads once. In the mixed
+case, the table reads:
+
+| Source | Interpretation | Links | Links (%) | Length (km) | Length (%) |
+| --- | --- | --- | --- | --- | --- |
+| user | All ways in the link have supplied probabilities | 233 | 22.28 | 122.285 | 22.76 |
+| mixed | Some ways are supplied; the remainder use the proxy | 175 | 16.73 | 92.924 | 17.30 |
+| proxy | No ways have supplied probabilities | 638 | 60.99 | 322.011 | 59.94 |
+
+`Links (%)` divides each source's count by 1,046; `Length (%)` divides its total physical length
+by the network length. For example, `233 / 1046 * 100 = 22.28%`. Source counts and lengths should
+sum to the non-self-loop network totals, and both percentage columns should sum to about 100%.
+Displayed values are rounded, so small differences in sums are expected.
+
+**Effective user/proxy length:** the source table assigns each entire mixed link to the `mixed`
+category. Effective coverage splits that link between supplied and uncovered shares. In this
+particular demo, every mixed link has two ways with one supplied, giving:
+
+```text
+Effective user length %  = 22.76 + 17.30 / 2 = 31.41%
+Effective proxy length % = 59.94 + 17.30 / 2 = 68.59%
+```
+
+The half-share applies to this demo; in general, use each link's fraction of supplied ways.
+The line `WARNING: 68.6% of network length uses the length proxy` highlights reliance on the
+proxy because effective supplied coverage is nonzero but below 50%. It does not describe the
+percentage of roads expected to fail. The proxy-only control shows 100% proxy coverage and the
+fully supplied control shows 100% user coverage.
+
+**Primary p0 and sweep:** `p0 = 0.01` assigns the proxy a 1% per-event closure probability for
+a 1 km link. A 2 km proxy link gets `1 - 0.99^2 = 0.0199`, or **1.99%**. Exported probabilities
+use this primary value. The sweep lists alternative assumptions for later reliability analysis;
+Ticket 08 does not report connectivity estimates for those alternatives.
+
+**CSV warnings:** the mixed demo deliberately contains 290 blank probability rows and one
+unmatched way ID: **291 warnings, 20 shown and 271 omitted**. Blank values use the proxy, and
+the unmatched ID is ignored. These counts refer to CSV rows/OSM ways, while the source table
+counts physical links; one way may occur in several links and one link may contain several ways.
+Omitted way IDs also use the proxy, but generate no blank-row warning because they have no CSV row.
+
+**Checking individual roads:** open `results/ticket08-spatial-mixed/network.gpkg`, layer `edges`,
+in QGIS and locate these rows by `name`. Use the supplied values from
+`data/ticket08-demo/spatial-mixed-probabilities.csv` and lengths in metres:
+
+| Road | Calculation at primary p0 | Expected p_fail |
+| --- | --- | --- |
+| Spatial road 2 | Proxy: `1 - 0.99^(284.525636/1000)` | 0.002855494 |
+| Spatial road 0 | One supplied zero; half uncovered: `1 - 0.99^(282.314549/2000)` | 0.001417672 |
+| Spatial road 6 | Two supplied values: `1 - (1-0.086638623)*(1-0.013256812)` | 0.098746882 |
+
+The table rounds inputs and outputs. For a complete comparison, match roads by `name` with
+`data/ticket08-demo/<scenario>-expected.csv`, which calculates direct survival products
+independently of the production calculation. All 1,046 probability/source pairs in each spatial
+output were checked against these references. The small exact example below gives additional
+answers that can be checked by hand. These checks establish calculation correctness; synthetic
+probabilities and the proxy are not calibrated against observed road closures.
+
+Earlier centrality and Ticket 06 robustness sections are expected to agree across these three
+scenarios because they analyze the same graph and retain the same settings. Ticket 08 assigns
+probabilities; Ticket 09 will use them to estimate connectivity reliability.
+
+### Manual examples
+
+From the repository root with your environment activated:
+
+```sh
+python examples/create_ticket08_demo.py
+georesilience run --config data/ticket08-demo/exact.yaml --overwrite
+georesilience run --config data/ticket08-demo/spatial-proxy.yaml --overwrite
+georesilience run --config data/ticket08-demo/spatial-user.yaml --overwrite
+georesilience run --config data/ticket08-demo/spatial-mixed.yaml --overwrite
+PYTHONPATH= PYTEST_DISABLE_PLUGIN_AUTOLOAD=1 python -m pytest -q tests/test_failure_probabilities.py
+```
+
+The small exact example has three nodes and five physical roads. In its output edges table:
+
+| Road name | Source | Expected `p_fail` |
+| --- | --- | --- |
+| 2 km proxy | proxy | `1 - 0.99^2 = 0.0199` |
+| 3 km mixed | mixed | `1 - 0.9 * 0.99^1.5`, about `0.113466` |
+| Single supplied way | user | `0.1` |
+| Two supplied ways | user | `1 - 0.9^2 = 0.19` (one-way, two OSM ways) |
+| Different supplied probabilities | user | `1 - 0.9 * 0.7 = 0.37` |
+
+The other three runs use the **same 200-node connected random geometric graph**, seed 42,
+with Euclidean lengths multiplied by `U(1.0,1.3)`. The generator samples until connected and
+records its chosen topology seed. Some way IDs span multiple links, and some links contain
+multiple ways. The proxy scenario has no CSV; the user scenario supplies every way, including
+explicit 0/1 controls; the mixed scenario supplies every third way, leaves another third blank
+and omits the remainder, plus one intentionally unmatched ID.
+
+Open each `results/ticket08-*/report.txt` and inspect its output GeoPackage in QGIS. Input copies
+are `data/ticket08-demo/exact-input.gpkg` and `spatial-input.gpkg`; line crossings are junctions
+only where graph nodes are shared. Compare edges by **road name** with the generated
+`<scenario>-expected.csv`, which uses independent direct survival products. Way-ID sets can
+repeat on different roads, so they are not unique comparison keys. The manifest records graph
+settings and exact answers. To inspect template export separately:
+
+```sh
+georesilience template --config data/ticket08-demo/spatial-mixed.yaml --out data/ticket08-demo/check-template.csv --overwrite
+```
+
+All four scenarios disable consolidation and figures. They keep earlier candidate and robustness
+work small because this ticket tests probability assignment. Generated inputs/configs/reference
+CSVs are ignored by Git; the generator and tests are tracked. Use `--nodes` and `--seed` on the
+generator to choose a different spatial case.

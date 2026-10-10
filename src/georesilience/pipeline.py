@@ -17,6 +17,7 @@ from .centralities import centrality_report, compute_centralities
 from .classification import classify_network, classification_report, write_classification_figures
 from .criticality import compute_criticality, criticality_report
 from .figures import FIGURE_FILENAMES, write_figures, write_robustness_figures
+from .failure_probabilities import compute_failure_probabilities, failure_probabilities_report
 from .links import _link_rows
 from .network import cleaning_report, load_and_clean
 from .screening import redundancy_report, screen_network
@@ -61,6 +62,9 @@ def run(config: RunConfig, out_override: Path | None = None, overwrite: bool = F
     graph, input_meta, cleaning = load_and_clean(config)
 
     links = _link_rows(graph)
+    failure_probabilities = compute_failure_probabilities(graph, links, config.reliability)
+    for row in links:
+        row.update(failure_probabilities.link_metrics[row["link_id"]])
     analysis, node_metrics, edge_scores, statistics, computation = compute_centralities(
         graph, links, config.analysis)
     degree = dict(zip(analysis.node_ids, map(int, analysis.csr.indptr[1:] - analysis.csr.indptr[:-1])))
@@ -123,6 +127,7 @@ def run(config: RunConfig, out_override: Path | None = None, overwrite: bool = F
                  "directed_edge_count": graph.number_of_edges()},
         "cleaning": cleaning,
         "classification": classification.summary,
+        "reliability": failure_probabilities.summary,
         "computation": computation,
         "metrics": {"degree": {"mean": sum(degree.values()) / n if n else 0,
                                  "max": max(degree.values(), default=0),
@@ -142,6 +147,7 @@ def run(config: RunConfig, out_override: Path | None = None, overwrite: bool = F
     lines.extend(["", *criticality_report(criticality.summary, criticality.information_summary)])
     lines.extend(["", *robustness_report(robustness.summary)])
     lines.extend(["", *classification_report(classification.summary)])
+    lines.extend(["", *failure_probabilities_report(failure_probabilities.summary)])
     lines = [line.encode("ascii", "backslashreplace").decode() for line in lines]
     lines = [textwrap.fill(line, width=100) if len(line) > 100 else line for line in lines]
     (out_dir / "report.txt").write_text("\n".join(lines) + "\n")

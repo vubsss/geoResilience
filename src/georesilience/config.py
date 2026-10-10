@@ -78,6 +78,18 @@ class RobustnessConfig(StrictModel):
         return self
 
 
+class ReliabilityConfig(StrictModel):
+    p_fail_csv: Path | None = None
+    p0: float = Field(default=0.01, ge=0, le=1, allow_inf_nan=False)
+    p0_sweep: list[Annotated[float, Field(ge=0, le=1, allow_inf_nan=False)]] = Field(
+        default_factory=lambda: [0.001, 0.01, 0.05])
+
+    @model_validator(mode="after")
+    def include_primary(self):
+        self.p0_sweep = sorted(set([*self.p0_sweep, self.p0]))
+        return self
+
+
 class RunConfig(StrictModel):
     input: InputConfig
     network: NetworkConfig = Field(default_factory=NetworkConfig)
@@ -85,6 +97,7 @@ class RunConfig(StrictModel):
     analysis: AnalysisConfig = Field(default_factory=AnalysisConfig)
     criticality: CriticalityConfig = Field(default_factory=CriticalityConfig)
     robustness: RobustnessConfig = Field(default_factory=RobustnessConfig)
+    reliability: ReliabilityConfig = Field(default_factory=ReliabilityConfig)
     output: OutputConfig = Field(default_factory=OutputConfig)
 
 

@@ -7,7 +7,7 @@
 - [x] **05 — Single-link criticality + information centrality** — completed, tested and manually verified by you.
 - [x] **06 — Attack vs failure curves** — completed, tested and manually verified by you, including ER and scale-free examples.
 - [x] **07 — Distribution classification** — completed, tested and manually verified by you, including five ER + five scale-free cases; inconclusive-label interpretation documented.
-- [ ] **08 — Failure probabilities** — not started.
+- [x] **08 — Failure probabilities** — completed, tested and manually verified by you, including exact answers and three spatial scenarios; report interpretation documented.
 - [ ] **09 — Connectivity reliability** — not started.
 - [ ] **10 — Travel-time reliability** — not started.
 - [ ] **11 — Hansen accessibility (uniform masses)** — not started.
@@ -123,7 +123,7 @@ georesilience run --config results/ticket02-graphml/run_config.yaml --out result
 
 Ticket **03** was implemented on **10 October 2026** and is **completed and manually verified
 by you**, as confirmed on **10 October 2026**.
-Tickets 08–16 have not been started. Tickets 04–07 are documented below.
+Tickets 09–16 have not been started. Tickets 04–08 are documented below.
 
 ### Changes
 
@@ -359,7 +359,7 @@ is preserved. All roads are 100 m except the 150 m backup road in the parallel e
 
 Ticket **05** was implemented on **10 October 2026** and is **completed, tested and manually verified
 by you**, as confirmed on **10 October 2026**. Tickets 02, 03 and 04 remain completed and manually verified.
-Tickets 06–07 are documented below; tickets 08–16 have not been started.
+Tickets 06–08 are documented below; tickets 09–16 have not been started.
 
 ### Changes
 
@@ -509,7 +509,7 @@ All nodes and roads are selected; `all: true` still leaves analytic bridges in t
 Ticket **06** was implemented on **10 October 2026** and is **completed, tested and manually
 verified by you**, as confirmed on **10 October 2026**, including the ER and scale-free examples.
 Your confirmation of Ticket 05's results has been recorded above.
-Ticket 07 is documented below; tickets 08–16 have not been started.
+Tickets 07–08 are documented below; tickets 09–16 have not been started.
 
 ### Changes
 
@@ -679,12 +679,12 @@ strategy and metric; these finite examples do not establish universal model supe
   were independently checked for row counts, baseline values and monotonicity. `git diff --check` passed.
   You confirmed that you manually checked the results on **10 October 2026**. Ticket 06 is complete.
 
-## Current ticket: 07 — Distribution classification
+## Ticket 07 — Distribution classification
 
 Ticket **07** was implemented on **10 October 2026** and is **completed and manually verified
 by you**, as confirmed on **11 October 2026**. Verification includes the requested
 **five ER + five scale-free graph benchmark** and review of its inconclusive labels.
-Tickets 08–16 have not been started.
+Ticket 08 is documented below; tickets 09–16 have not been started.
 
 ### Changes
 
@@ -920,4 +920,179 @@ these observed limitations.
 - `git diff --check` passed. Verification used Python **3.13.3**, powerlaw **2.0.0**, SciPy
   **1.18.1** and the existing temporary environment. You confirmed completion after reviewing
   the generated outputs and the inconclusive-label explanation on **11 October 2026**.
-  Ticket 07 is complete; Ticket 08 has not been started.
+  Ticket 07 is complete; Ticket 08 is documented below.
+
+## Current ticket: 08 — Failure probabilities
+
+Ticket **08** was implemented on **11 October 2026** and is **completed and manually verified
+by you**, as confirmed on **11 October 2026**. Verification covers the ticket's exact-answer and
+spatial examples. Tickets 09–16 have not been started.
+
+### Changes
+
+- Added validated `reliability.p_fail_csv`, `p0` and `p0_sweep` configuration. Probabilities must
+  be finite and in `[0,1]`; the resolved sweep is sorted, deduplicated and includes the primary p0.
+- Added `src/georesilience/failure_probabilities.py` for template export, CSV validation,
+  any-part-fails combination, primary assignment, reusable sweep calculations and coverage reports.
+- Added `georesilience template --config ... --out ...` with loading/cleaning only and explicit
+  overwrite control. The library exporter returns commented CSV text and optionally writes a file.
+- Templates contain one row per distinct way ID on non-self-loop physical links, with names,
+  highway tags, equal-share length, containing-link count and an empty probability. Reciprocal
+  directions count once; repeated ways and parallel roads are accounted for.
+- CSV imports accept comments and ignore optional metadata columns. IDs are parsed as integers
+  without float conversion. Invalid probabilities, duplicate/malformed IDs and missing columns
+  stop the run; offending data-record numbers are reported. Unknown IDs and blanks generate
+  warnings, capped at 20 messages with total/omitted counts. CSV validation precedes expensive
+  centrality computation.
+  Pandas is declared explicitly as a dependency for its comment-aware CSV reader; it was already
+  installed through the existing GeoPandas dependency.
+- Assigned primary `p_fail` and `p_fail_source` to exported physical links and every constituent
+  directed edge. Self-loop values are null and excluded from coverage. Missing way IDs use the
+  full proxy. A supplied probability of zero is covered data.
+- Added root `summary.json.reliability`, a **Failure probabilities** report section and resolved
+  settings. Coverage includes per-source link/length percentages and effective supplied/proxy
+  length shares. The low-user-coverage warning includes uncovered shares of mixed links.
+- Added `examples/create_ticket08_demo.py`: a three-node/five-road exact example and three
+  scenarios on the same seeded **200-node spatial graph**, with QGIS input copies, unfilled
+  templates, supplied CSVs, configs, manifests and independent expected-result CSVs. Generated
+  files are gitignored. No road-class risk table or hazard preset was introduced.
+- Added `tests/test_failure_probabilities.py` covering exact answers, numerical endpoints/tiny
+  probabilities, validation, warning limits, template round-trip, shared/multiple ways, parallel
+  and one-way roads, self-loops, absent IDs, coverage thresholds, independent spatial references,
+  CLI cleaning-only behavior, early failure and saved-output integration. Updated README.
+
+### Conventions and scope
+
+`p_fail` is a **per-event closure probability**, not an annual rate. A supplied way's probability
+is reused on each containing physical link. The ticket's any-part-fails rule combines supplied
+way survival probabilities with the length proxy for uncovered shares; it assumes independent
+parts. With no supplied values, `p_link = 1 - (1-p0)^length_km`. The implementation uses
+`log1p`/`expm1` to preserve tiny values and handles exact 0/1 explicitly.
+
+Simplification loses original per-way lengths, so both template lengths and mixed-link shares
+use the ticket's **equal-share approximation**. The source-category table assigns the whole link
+to user/mixed/proxy. Effective user/proxy percentages instead split mixed-link length. The
+additional proxy warning triggers at **0 < effective user length coverage < 50%**, matching the
+interpretation discussed before implementation. At exactly 50% or zero it is omitted; the table
+always reports coverage. Self-loops never enter these denominators.
+
+CSV error/warning row numbers mean **one-based data rows after the header**, excluding comments
+and empty lines. Blank values are missing; zero is supplied. Unknown rows are still validated,
+and an unknown blank row contributes both an unmatched-ID and blank-value warning.
+
+This stage assigns probabilities; it does not draw closures or estimate connectivity. Ticket 06
+removal experiments retain their existing fraction-based behavior. Tickets 09/10 can reuse
+`probabilities_at_p0(links, user_probabilities, p0)` for each sweep value. Synthetic probabilities
+test implementation correctness, not real-world hazard calibration.
+
+### Run and manually verify
+
+Run from the repository root with your environment activated. The existing verification
+environment is `/tmp/georesilience-ticket02-venv` if still available.
+
+```sh
+python examples/create_ticket08_demo.py
+georesilience template --config data/ticket08-demo/exact.yaml --out data/ticket08-demo/check-template.csv --overwrite
+georesilience run --config data/ticket08-demo/exact.yaml --overwrite
+georesilience run --config data/ticket08-demo/spatial-proxy.yaml --overwrite
+georesilience run --config data/ticket08-demo/spatial-user.yaml --overwrite
+georesilience run --config data/ticket08-demo/spatial-mixed.yaml --overwrite
+PYTHONPATH= PYTEST_DISABLE_PLUGIN_AUTOLOAD=1 python -m pytest -q tests/test_failure_probabilities.py
+```
+
+1. Open `results/ticket08-exact/network.gpkg`, layer `edges`, in QGIS. Expect **3 nodes / 5 physical
+   roads**, including two separate one-way parallel roads. Match rows by `name`:
+
+   | Name | Source | Expected probability |
+   | --- | --- | --- |
+   | 2 km proxy | proxy | `0.0199` |
+   | 3 km mixed | mixed | `1 - 0.9 * 0.99^1.5`, about `0.113466` |
+   | Single supplied way | user | `0.1` |
+   | Two supplied ways | user | `0.19` |
+   | Different supplied probabilities | user | `0.37` |
+
+2. Inspect `check-template.csv`: expect eight way rows, empty `p_fail`, per-event and equal-share
+   header comments, and total shared lengths **10,000 m**. Ways 201/202 each receive 1,500 m.
+   Fill every row with 0.1, point a copy of the YAML to it, and rerun to a separate output folder:
+   all links should become `user`, and links containing two distinct OSM ways should have
+   probability 0.19.
+3. Compare the three `results/ticket08-spatial-*/report.txt` files. They analyze the **same graph**,
+   with proxy-only, fully supplied and partial coverage. The partial scenario deliberately has
+   blank rows and one unmatched ID. Inspect total/shown/omitted warnings and the proxy warning.
+4. Compare each GeoPackage's edges by **name** with the matching
+   `data/ticket08-demo/<scenario>-expected.csv`. Way-ID sets can repeat across different roads;
+   they are not unique comparison keys. Input GeoPackages are `exact-input.gpkg` and
+   `spatial-input.gpkg`; crossings are junctions only at shared graph nodes.
+5. Inspect `summary.json.reliability.coverage.by_source` alongside effective
+   `user_length_pct` / `proxy_length_pct`. Category length percentages sum to 100%, and effective
+   shares sum to 100%, but mixed-link length contributes to both effective shares.
+6. Check resolved `run_config.yaml`: all four examples specify sweep `[0.001, 0.05]`, which becomes
+   `[0.001, 0.01, 0.05]` after including the primary. Supplied links' probabilities are invariant
+   to p0; proxy/mixed probabilities increase with p0. Use a copied YAML and a separate output
+   directory to try another primary value.
+7. In a copied CSV, try `p_fail=1.2`, a word, or a duplicate ID. Expect a row-specific error.
+   Leave a value blank to get a warning and proxy treatment. Template export itself should work
+   even if the config's probability CSV is missing, because it only loads and cleans the network.
+
+The generator accepts `--nodes` and `--seed`. Defaults use a connected random geometric graph,
+seed 42, with lengths `Euclidean metres * U(1.0,1.3)`. All scenarios disable consolidation and
+figures and keep earlier analysis work small; full input/template/probability artifacts remain.
+
+### Verified example findings
+
+The default spatial input has **200 nodes / 1,046 physical links**. All three spatial outputs
+retain that same graph; only the supplied probability coverage changes.
+
+| Scenario | User links | Mixed links | Proxy links | Effective user length | Effective proxy length |
+| --- | --- | --- | --- | --- | --- |
+| Exact (3 nodes) | 3 | 1 | 1 | 65.00% | 35.00% |
+| Spatial proxy | 0 | 0 | 1,046 | 0.00% | 100.00% |
+| Spatial user | 1,046 | 0 | 0 | 100.00% | 0.00% |
+| Spatial mixed | 233 | 175 | 638 | 31.41% | 68.59% |
+
+All four CLI runs completed. Each saved probability/source was checked against its independent
+reference CSV by road name; the largest absolute probability difference was **1.67e-16**.
+The exact example reproduces all five expected answers above. Its blank way 202 produces one
+CSV warning. The spatial mixed case produces **291 CSV warnings** (290 blanks and one unmatched
+ID), with **20 shown / 271 omitted**, and the additional line
+`WARNING: 68.6% of network length uses the length proxy`.
+
+### Report interpretation and manual completion
+
+You confirmed that Ticket 08 is manually verified on **11 October 2026**, after reviewing the
+results and their interpretation. The README now includes
+[How to read the Failure probabilities report](README.md#how-to-read-the-failure-probabilities-report):
+
+- Explains that the source table measures supplied/proxy **coverage**, while individual
+  per-event closure probabilities are stored in `edges.p_fail`.
+- Defines user/mixed/proxy, physical links versus directed edges and OSM-way CSV rows, and
+  shows the mixed example's counts, kilometres and percentage arithmetic.
+- Derives effective coverage **31.41% user / 68.59% proxy** from the mixed-link shares and
+  explains why this produces the **68.6% proxy-length warning**.
+- Explains the primary p0, future sweep use, supplied zero versus blank values and the demo's
+  **291 CSV warnings (20 shown / 271 omitted)**.
+- Gives three spatial-road calculations for manual checking in QGIS, reference-CSV comparisons
+  by road name and the distinction between calculation correctness and hazard calibration.
+- Explains why earlier centrality and Ticket 06 robustness sections agree across the three
+  spatial scenarios; Ticket 09 will consume the probabilities for connectivity estimates.
+
+### Verification results
+
+- Final targeted Ticket 08 suite: **53 passed** in **1.99 seconds**. Includes independent
+  probability checks on **three 200-node spatial graphs** (seeds 7, 42, 84), across five p0 values,
+  and four small end-to-end scenario runs. Tests cover template cleaning/simplification, finite
+  probabilities, 50% warning
+  boundaries, warning truncation, large exact IDs and primary-sweep inclusion.
+  Malformed extra CSV cells are rejected instead of allowing implicit index inference to shift
+  probabilities onto different way IDs.
+- Artifact checks confirmed node/link counts, finite probabilities in `[0,1]`, source labels,
+  category/effective percentage totals, valid finite JSON and ASCII reports wrapped to 100 columns.
+  The actual template CLI also exported eight exact-example way rows totaling 10,000 m.
+- Full offline regression suite: **142 passed, 4 skipped** in **257.23 seconds**. The skips are
+  the existing three live OSM tests and opt-in 60,000-node benchmark. After this suite started,
+  one additional malformed-CSV guard test was added; the final targeted run above verifies all
+  **53 Ticket 08 cases**, including the strengthened parser and end-to-end outputs.
+- `git diff --check` passed. Verification used Python **3.13.3** and the existing temporary
+  environment. All four default CLI examples and the template export completed successfully.
+- You confirmed manual verification on **11 October 2026**. Ticket 08 is complete;
+  Ticket 09 has not been started.
