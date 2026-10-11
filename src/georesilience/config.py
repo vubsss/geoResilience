@@ -1,3 +1,4 @@
+import math
 from pathlib import Path
 from typing import Annotated, Literal
 
@@ -113,6 +114,22 @@ class TravelTimeConfig(StrictModel):
         return self
 
 
+class AccessibilityConfig(StrictModel):
+    half_distance_km: float = Field(default=2.0, gt=0, allow_inf_nan=False)
+    cutoff_factor: float = Field(default=5.0, gt=0, allow_inf_nan=False)
+    k: Literal[1, 2] = 1
+    all_links: bool = False
+
+    @model_validator(mode="after")
+    def validate_distances(self):
+        half_m = self.half_distance_km * 1000
+        radius = half_m * self.cutoff_factor
+        beta = math.log(2) / half_m
+        if not all(math.isfinite(value) and value > 0 for value in (half_m, radius, beta)):
+            raise ValueError("accessibility half-distance, radius and beta must be finite and positive")
+        return self
+
+
 class RunConfig(StrictModel):
     input: InputConfig
     network: NetworkConfig = Field(default_factory=NetworkConfig)
@@ -122,6 +139,7 @@ class RunConfig(StrictModel):
     robustness: RobustnessConfig = Field(default_factory=RobustnessConfig)
     reliability: ReliabilityConfig = Field(default_factory=ReliabilityConfig)
     travel_time: TravelTimeConfig = Field(default_factory=TravelTimeConfig)
+    accessibility: AccessibilityConfig = Field(default_factory=AccessibilityConfig)
     output: OutputConfig = Field(default_factory=OutputConfig)
 
 

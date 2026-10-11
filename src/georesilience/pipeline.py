@@ -17,7 +17,8 @@ from .centralities import centrality_report, compute_centralities
 from .classification import classify_network, classification_report, write_classification_figures
 from .connectivity import compute_connectivity, connectivity_report, load_od_pairs, write_od_reliability
 from .criticality import compute_criticality, criticality_report
-from .figures import FIGURE_FILENAMES, write_connectivity_figure, write_figures, write_robustness_figures
+from .figures import (FIGURE_FILENAMES, write_connectivity_figure, write_figures,
+                      write_robustness_figures, write_accessibility_figures)
 from .failure_probabilities import compute_failure_probabilities, failure_probabilities_report
 from .links import _link_rows
 from .network import cleaning_report, load_and_clean
@@ -25,6 +26,7 @@ from .screening import redundancy_report, screen_network
 from .robustness import compute_robustness, robustness_report, write_curves
 from .time_models import prepare_time_model
 from .travel_time import compute_travel_time, travel_time_report
+from .accessibility import compute_accessibility, accessibility_report
 
 
 def _versions():
@@ -97,6 +99,14 @@ def run(config: RunConfig, out_override: Path | None = None, overwrite: bool = F
     statistics["information"] = criticality.information_summary
     statistics["runtime_seconds"].update(criticality.runtime_seconds)
     computation.update(criticality.computation)
+    accessibility = compute_accessibility(
+        graph, links, screening, config.accessibility, n_jobs=computation["n_jobs"],
+        budget_bytes=computation["memory_budget_bytes"])
+    for row in links:
+        row.update(accessibility.link_metrics[row["link_id"]])
+    statistics["accessibility"] = accessibility.summary
+    statistics["runtime_seconds"].update(accessibility.runtime_seconds)
+    computation.update(accessibility.computation)
     robustness = compute_robustness(
         graph, links, config.robustness, seed=config.analysis.seed, n_jobs=computation["n_jobs"],
         budget_bytes=computation["memory_budget_bytes"])
@@ -134,6 +144,7 @@ def run(config: RunConfig, out_override: Path | None = None, overwrite: bool = F
                       "information": criticality.information[node],
                       **connectivity.node_metrics[node],
                       **travel_time.node_metrics[node],
+                      **accessibility.node_metrics[node],
                       "geometry": Point(data["x"], data["y"])})
     crs = graph.graph.get("crs", "EPSG:4326")
     nodes_gdf = gpd.GeoDataFrame(nodes, geometry="geometry", crs=crs)
@@ -178,6 +189,7 @@ def run(config: RunConfig, out_override: Path | None = None, overwrite: bool = F
     lines.extend(["", *failure_probabilities_report(failure_probabilities.summary)])
     lines.extend(["", *connectivity_report(connectivity.summary)])
     lines.extend(["", *travel_time_report(travel_time.summary)])
+    lines.extend(["", *accessibility_report(accessibility.summary)])
     lines = [line.encode("ascii", "backslashreplace").decode() for line in lines]
     lines = [textwrap.fill(line, width=100) if len(line) > 100 else line for line in lines]
     (out_dir / "report.txt").write_text("\n".join(lines) + "\n")
@@ -188,4 +200,5 @@ def run(config: RunConfig, out_override: Path | None = None, overwrite: bool = F
         write_robustness_figures(robustness, out_dir / "figures")
         write_classification_figures(classification, out_dir / "figures")
         write_connectivity_figure(nodes_gdf, links_gdf, out_dir / "figures")
+        write_accessibility_figures(nodes_gdf, links_gdf, out_dir / "figures")
     return summary

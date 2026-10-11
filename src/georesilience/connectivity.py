@@ -399,7 +399,7 @@ def connectivity_report(summary):
             return "undefined (no positive-weight distinct node pairs)"
         return f"{row[value]:.6f} [{row[low]:.6f}, {row[high]:.6f}]"
 
-    lines = ["Connectivity reliability", "AP3-inspired connectivity analysis; accessibility-based vulnerability is a later stage.",
+    lines = ["Connectivity reliability", "AP3-inspired connectivity analysis; Hansen accessibility is reported separately.",
              "Network: expected fraction of mutually reachable distinct node pairs (same SCC).",
              "Uniform node pairs represent potential connections, not observed trip demand."
              if summary["node_weights"] == "uniform" else "Node-pair weights are products of the supplied node weights.",

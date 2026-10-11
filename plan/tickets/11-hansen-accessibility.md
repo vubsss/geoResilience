@@ -1,10 +1,14 @@
 # 11 — Hansen accessibility (uniform masses)
 
-**What to build:** each node gets a Hansen accessibility score with exponential distance decay. Using Taylor et al.'s definitions, the run identifies **vulnerable nodes** (accessibility collapses when a nearby link is lost) and **critical links** (the network's total accessibility drops most when they close). With no population data, every node has mass 1, which gives purely structural accessibility. 12 swaps in population without code changes.
+**What to build:** each node gets a Hansen accessibility score with exponential distance decay. The run identifies **vulnerable nodes** (accessibility collapses when a nearby link is lost) and **critical links** (the network's total accessibility drops most when they close). With no population data, every node has mass 1, which gives purely structural accessibility. 12 swaps in population through the existing destination-weight interface.
+
+**Definition decision (12 October 2026):** implemented using the explicit exponential formula
+below, as requested by the user. This is the plan's distance-decay variant; it is not a claim
+to reproduce Taylor et al. (AP3)'s alternative accessibility expression.
 
 **Blocked by:** 05 (reuses the affected-source recompute and analytic-bridge machinery, and the candidate sets from 04)
 
-**Status:** ready-for-agent
+**Status:** completed, automatically tested and manually verified by the user on 12 October 2026.
 
 ## Behaviour
 
@@ -41,8 +45,8 @@ For every candidate link and every analytic bridge (04), and for every link when
 - `k = 1`: `vuln = max` relative drop over all evaluated links, and `vuln_link_id` is the link that caused it.
 - `k = 2`: additionally, for each node, remove each pair from its top-3 links together (3 pairs) and recompute `A_i` for that node only (one truncated Dijkstra per pair). `vuln_k2` is the max.
 - Nodes with `A_i = 0` (nothing within R): `vuln` = NaN, flagged `isolated_in_R`.
-- **Scope note** (report and docs): node vulnerability is the max over *evaluated* links, i.e. the candidate set by default. It is exact for all links only when `all_links: true`.
-- **Cost note** (docs): with `all_links: true`, the cost grows with the number of nodes within R. At a 2 km half-distance (R = 10 km), a whole-city run is Ada-only. At ≤ 1 km it is laptop-feasible overnight.
+- **Scope note** (report and docs): single-link vulnerability is the max over *evaluated* links, i.e. the candidate set by default. It is exact for all links only when `all_links: true`. The k=2 maximum is exact over the selected top-three pairs, even with `all_links: true`; it need not be the global worst pair.
+- **Cost note** (docs): with `all_links: true`, the cost grows with the number of nodes within R. The original plan budgets a whole-city 2 km half-distance (R = 10 km) run for Ada and suggests ≤ 1 km for an overnight laptop run. These are planning assumptions, not measured performance guarantees; graph density, workers and evaluated links also determine cost.
 
 ### Outputs
 - `nodes` layer: `hansen_a`, `vuln`, `vuln_link_id`, `vuln_k2` (if k = 2), `isolated_in_R`.
@@ -58,12 +62,23 @@ For every candidate link and every analytic bridge (04), and for every link when
 - Figures: a map of `hansen_a` and a map of `vuln` (nodes), plus the top 50 `access_drop` links.
 
 ## Acceptance criteria
-- [ ] Layer 1:
+- [x] Layer 1:
   - A two-node two-way link of 1 km with half-distance 1 km: `A = 0.5` for each node. Removing the link gives `A' = 0` and `vuln = 1`.
   - Nodes farther than R contribute 0.
-- [ ] Layer 2 on random spatial graphs:
+- [x] Layer 2 on random spatial graphs:
   - Affected-source recomputation matches a naive full truncated recompute for every link, to within 1e-9.
   - Analytic bridges match a full recompute.
-  - `k = 2` matches brute force for sampled nodes.
-- [ ] W is respected: a test with non-uniform W gives the hand-computed A.
-- [ ] Outputs (columns, summary, report, figures) are present.
+  - `k = 2` matches brute force over each node's selected top-three pairs. A three-road fixture also checks all possible pairs.
+- [x] W is respected: a test with non-uniform W gives the hand-computed A.
+- [x] Outputs (columns, summary, report, figures) are present.
+
+## Implementation clarifications
+
+- `all_links` excludes self-loops, which cannot improve nonnegative shortest-path distances.
+- Zero-effect closures remain eligible for the top-three list: two individually harmless
+  closures can have a joint effect. Equal single-link drops retain the smaller link ID first.
+- When no links are evaluated, `vuln` is undefined even if A is positive. `vuln_k2` is undefined
+  when fewer than two links are available. These are missing values, not evidence of zero risk.
+- Extra audit fields are `access_top3_link_ids`, `vuln_k2_link_ids` and `access_method`.
+- See the Ticket 11 sections of [README](../../README.md) and
+  [TICKET_UPDATES](../../TICKET_UPDATES.md) for examples, evidence and limitations.

@@ -7,8 +7,9 @@ and evidence from tests already run remain in [TICKET_UPDATES.md](../TICKET_UPDA
 These recommendations do not reopen completed tickets. Ticket 09 is completed for now at
 your request; its additional experiments remain follow-up work. Ticket 10 is completed and
 manually verified by you as of 11 October 2026, with verification evidence in the ticket log.
-Tickets 11–16 are prospective:
-their recommendations should be reviewed when those tickets are implemented.
+Ticket 11 is completed and manually verified by you as of 12 October 2026;
+its completed checks and further recommendations are recorded below. Tickets 12–14 and 16
+remain prospective; Ticket 15's implemented comparisons and remaining experiments are below.
 
 Unchecked items are proposed follow-ups, not claims that the corresponding behavior is
 currently untested. Checked items reference existing test evidence. Some recommendations overlap
@@ -181,15 +182,35 @@ these are implementation-stage results, not new runs for this update. See
   while varying origins, workers and budgets. Verify temporary-file cleanup after a controlled
   failure in a disposable test directory; do not infer city-scale performance from 200-node runs.
 
-## 11 — Hansen accessibility (prospective)
+## 11 — Hansen accessibility
 
-- [ ] Broaden full-recompute comparisons to directed spatial bottlenecks and nodes exactly at,
-  just inside and just outside the truncation radius, with uniform and unequal destination masses.
-- [ ] Compare candidate-only and all-link vulnerability on a manageable graph; state the scope of
-  each maximum. For k=2, distinguish checking the selected top-three pairs from finding the global
-  worst pair over all roads; quantify any gap on a small exhaustive example.
+Completed and manually verified by you on 12 October 2026, using the plan's directed,
+truncated exponential definition. Unchecked experiments below remain follow-up recommendations.
+Software checks below establish this formula's implementation, not agreement with observed
+human travel behaviour or equivalence to the AP3 expression.
+
+- [x] Compare directed affected-source recomputation for every link with independent NetworkX
+  full recomputation on five seeded nine-node spatial graphs with unequal destination masses;
+  check uniform masses separately in known-answer fixtures. Check forward/reverse analytic
+  bridge losses against full recomputation on paths,
+  including one-way arcs, radius truncation and zero destination weights. Test exactly at,
+  just inside and just outside R; the radius boundary is inclusive.
+- [x] Independently check k=2 over the selected pairs on the same seeded graphs. A three-road
+  parallel fixture exhausts all pairs and catches synergy between individually harmless
+  closures. Check deterministic ties, missing results, JSON/layer/figure exports, memory-budget
+  rejection and overwrite cleanup. Evidence: `tests/test_accessibility.py`.
+- [x] Run candidate-only and all-link scenarios on the same seeded 100-node spatial graph;
+  compare identical baseline A and nondecreasing all-link single-link vulnerability. Evidence:
+  `data/ticket11-demo/manifest.json`, `results/ticket11-spatial-*/` and the Ticket 11 log.
+- [ ] Quantify the gap between the top-three k=2 heuristic and a global exhaustive pair search
+  on networks with more than three roads, including ties and pair synergy. All-link evaluation
+  makes the single-link maximum exhaustive; it does not make the selected-pair search exhaustive.
 - [ ] Vary half-distance and cutoff independently, recording rank sensitivity and runtime without
   treating one parameter choice as universally representative of accessibility.
+- [ ] Repeat on larger frozen directed road extracts and several independent spatial seeds.
+  Include multiple bottlenecks, unequal one-way distances and many equal-length alternatives;
+  record peak memory and runtime versus R, worker count and candidate coverage. The 100-node
+  demo does not validate the original plan's city-scale Ada/laptop cost assumptions.
 
 ## 12 — Population weighting (prospective)
 

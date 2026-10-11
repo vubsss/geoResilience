@@ -8,6 +8,7 @@ NODE_MEASURES = ("closeness", "straightness", "betweenness")
 FIGURE_FILENAMES = ("degree_hist.png", *(f"{name}_ccdf.png" for name in NODE_MEASURES),
                     "edge_betweenness_map.png", "redundancy_map.png", "critical_links_map.png",
                     "robustness_scc.png", "robustness_efficiency.png", "connectivity_nodes_map.png",
+                    "hansen_a_map.png", "vuln_map.png", "access_drop_map.png",
                     *CLASSIFICATION_FIGURES)
 
 
@@ -140,4 +141,38 @@ def write_connectivity_figure(nodes, links, folder):
     ax.set_title("Main-component membership probability")
     ax.set_axis_off()
     fig.savefig(folder / "connectivity_nodes_map.png", bbox_inches="tight", dpi=180)
+    plt.close(fig)
+
+
+def write_accessibility_figures(nodes, links, folder):
+    import matplotlib.pyplot as plt
+
+    folder.mkdir(exist_ok=True)
+    for name, title, label in (("hansen_a", "Hansen structural accessibility", "Accessibility A"),
+                                ("vuln", "Node vulnerability to evaluated single-link closures", "Relative accessibility drop")):
+        fig, ax = _critical_map_canvas(links)
+        links.plot(ax=ax, color="lightgrey", linewidth=.7)
+        finite = nodes[np.isfinite(nodes[name])]
+        missing = nodes[~np.isfinite(nodes[name])]
+        if not finite.empty:
+            finite.plot(ax=ax, column=name, cmap="viridis", markersize=25, vmin=0,
+                        vmax=1 if name == "vuln" else max(float(finite[name].max()), 1e-12),
+                        legend=True, legend_kwds={"label": label, "shrink": .65})
+        if not missing.empty:
+            missing.plot(ax=ax, color="grey", marker="x", markersize=25, label="Undefined")
+            ax.legend()
+        ax.set_title(title)
+        ax.set_axis_off()
+        fig.savefig(folder / f"{name}_map.png", bbox_inches="tight", dpi=180)
+        plt.close(fig)
+    fig, ax = _critical_map_canvas(links)
+    links.plot(ax=ax, color="lightgrey", linewidth=.7)
+    selected = links[links.access_rank.notna() & (links.access_rank <= 50)]
+    if not selected.empty:
+        selected.plot(ax=ax, column="access_drop", cmap="YlOrRd", linewidth=2,
+                      vmin=0, vmax=max(float(selected.access_drop.max()), 1e-12),
+                      legend=True, legend_kwds={"label": "Relative total accessibility drop", "shrink": .65})
+    ax.set_title(f"Top {len(selected)} links by accessibility drop")
+    ax.set_axis_off()
+    fig.savefig(folder / "access_drop_map.png", bbox_inches="tight", dpi=180)
     plt.close(fig)

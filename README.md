@@ -1,10 +1,11 @@
 # GeoResilience
 
-GeoResilience analyzes road network structure and resilience. Tickets 01–10 provide input,
+GeoResilience analyzes road network structure and resilience. Tickets 01–11 provide input,
 cleaning, physical road links, exact centralities, redundancy screening, single-road damage,
 information centrality, cumulative attack/failure experiments, distribution classification,
 per-event road failure probabilities, Monte Carlo connectivity and travel-time reliability,
-and auditable outputs. Ticket 15 adds a four-city qualitative comparison with AP2, including
+distance-decayed Hansen accessibility and auditable outputs. Ticket 15 adds a four-city
+qualitative comparison with AP2, including
 an explicit reference using the paper's spatial efficiency. Later analysis tickets are
 tracked in [TICKET_UPDATES.md](TICKET_UPDATES.md).
 
@@ -109,6 +110,11 @@ travel_time:
   highway_speeds_kph: null
   time_model: free_flow
   time_attribute: travel_time_s
+accessibility:
+  half_distance_km: 2.0
+  cutoff_factor: 5
+  k: 1
+  all_links: false
 output:
   dir: results/
   figures: true
@@ -1447,6 +1453,151 @@ and `--out`. Generated data/results are ignored; generator and tests are tracked
 configs with different `tau` values and output directories: with fixed inputs and seed,
 reliability must stay constant or increase as the tolerance increases. For further validation,
 see [plan/TEST_RECOMMENDATIONS.md](plan/TEST_RECOMMENDATIONS.md#10--travel-time-reliability).
+
+## Hansen accessibility (Ticket 11)
+
+Completed, tested and **manually verified by you on 12 October 2026**, using the definition
+in the plan at your request. This implements the explicit exponential distance-decay expression
+in [Ticket 11](plan/tickets/11-hansen-accessibility.md). It does not claim equivalence to the
+alternative accessibility expression in Taylor et al. (AP3).
+
+For origin node i, the score is
+
+```text
+h = half_distance_km × 1000 metres
+beta = ln(2) / h
+R = cutoff_factor × h
+A_i = sum over j != i with d_ij <= R of W_j × exp(-beta × d_ij)
+```
+
+Here `d_ij` is the shortest **outbound directed road distance**, in metres. Each destination
+has `W_j = 1`, giving structural accessibility. A destination at distance h contributes 0.5;
+one at 2h contributes 0.25. The origin never contributes to its own score. Distances exactly
+at R are included; farther or unreachable destinations contribute zero. Radius truncation is
+part of this definition, rather than an approximation to an untruncated sum.
+
+`hansen_a` is a sum of discounted opportunities, not a probability or a normalized fraction.
+The network total is the **unweighted sum of origin scores**, `sum(A_i)`. Higher values mean
+more opportunities accessible at shorter distances under the chosen parameters. They depend
+on node density, study boundary, half-distance and cutoff; cross-city comparisons require
+consistent choices. This stage always respects directionality, independently of
+`analysis.directed_removal` and `analysis.directed_centrality`. It uses distance only and is
+unaffected by the travel-time model or road speeds.
+
+```yaml
+accessibility:
+  half_distance_km: 2.0   # finite and positive; weight halves at this road distance
+  cutoff_factor: 5       # finite and positive; R = 10 km with the defaults
+  k: 1                   # 1 or 2
+  all_links: false       # candidates plus analytic bridges; true evaluates all physical roads
+```
+
+The baseline uses chunked truncated Dijkstra from every node. For single-road closures,
+only sources whose shortest paths can use the road within R need recomputation. Small-side
+physical bridges use exact forward and reverse cross-cut contribution sums. These shortcuts
+preserve the plan's result, including one-way travel and parallel alternatives. Scores retain
+the original node set after closures. The implementation accepts an optional destination
+weight vector in `compute_accessibility(..., weights=...)`, in graph node order, for Ticket 12;
+the current pipeline uses ones and has no population input setting yet.
+
+### Reading the Accessibility section of report.txt
+
+- **Masses**, **half-distance**, **beta** and **R** identify the score being computed.
+  **Total A** and **mean A** describe the intact network before any closure.
+- **Critical links** are ranked by `access_drop = (sum(A_i) - sum(A_i_after)) / sum(A_i)`.
+  A drop of 0.20 means the road closure loses 20% of the intact network's total accessibility.
+  This includes both longer routes and destinations becoming unreachable or moving beyond R.
+  `access_rank = 1` identifies the largest evaluated drop; equal drops use smaller link IDs first.
+- **Node vulnerability**, `vuln`, is that node's largest relative accessibility loss over the
+  evaluated single-road closures. A value of 1 means some evaluated closure removes all of its
+  accessible opportunities; 0 means none of those closures changes its score. `vuln_link_id`
+  records the winning road. Mean and p90 summarize nodes with defined vulnerability; p90 is
+  the 90th percentile, not a confidence limit. The top-node and top-link tables measure different
+  things: a severe local loss can make a small contribution to the network total.
+- **Links evaluated** and **scope** identify the search coverage. By default this is screening
+  candidates plus analytic bridges. Unevaluated roads have missing `access_drop` and rank,
+  rather than zero loss. Only `all_links: true` establishes the worst single-road closure over
+  all non-self-loop physical links. Self-loops cannot improve these positive-distance paths.
+- With **k=2**, each node tests all pairs from its own top three evaluated single-road closures
+  (up to three pairs). `vuln_k2` is the largest joint relative loss among those pairs;
+  `vuln_k2_link_ids` records the winning pair. This is **not a global search over all road pairs**,
+  even when `all_links: true`. Zero-effect single closures remain in the top-three selection
+  because two individually harmless closures can jointly cause a loss. Ties use link IDs.
+- **Nodes with A=0** are flagged `isolated_in_R` and have undefined vulnerability. They may
+  still be connected to the network: their nearest outbound opportunity can simply exceed R.
+  Undefined vulnerability appears as a missing value in QGIS and null in JSON statistics.
+  It is also undefined when no links were evaluated; k=2 is undefined with fewer than two
+  evaluated links. Missing results do not imply zero risk.
+
+The `nodes` layer in `network.gpkg` includes `hansen_a`, `vuln`, `vuln_link_id`,
+`isolated_in_R` and the semicolon-separated audit field `access_top3_link_ids`. k=2 additionally
+exports `vuln_k2` and `vuln_k2_link_ids`. The `edges` layer includes `access_drop`, `access_rank`
+and `access_method` (`analytic_bridge`, `affected_sources` or `not_evaluated`). Detailed values,
+coverage and top-20 tables are in `summary.json.metrics.accessibility`; runtime and source-row
+counts are in the existing runtime/computation sections. When figures are enabled, inspect
+`figures/hansen_a_map.png`, `vuln_map.png` and `access_drop_map.png` (top 50 evaluated links).
+
+The complete node accessibility vector is **not printed in `report.txt` or `summary.json`**;
+read `hansen_a` in the GeoPackage `nodes` attribute table, ordered by `node_id`. For `path-k2`,
+node IDs 0, 1 and 2 have scores **[0.75, 1.00, 0.75]**. The report gives their total (2.5) and
+mean (0.833333…), while its top-node table ranks vulnerability rather than accessibility.
+
+### Run and manually verify Ticket 11
+
+With your project environment activated, generate the reproducible offline examples and run:
+
+```sh
+python examples/create_ticket11_demo.py
+georesilience run --config data/ticket11-demo/two-node.yaml --overwrite
+georesilience run --config data/ticket11-demo/path-k2.yaml --overwrite
+georesilience run --config data/ticket11-demo/cutoff.yaml --overwrite
+georesilience run --config data/ticket11-demo/parallel-k2.yaml --overwrite
+georesilience run --config data/ticket11-demo/directed.yaml --overwrite
+georesilience run --config data/ticket11-demo/spatial-candidates.yaml --overwrite
+georesilience run --config data/ticket11-demo/spatial-all.yaml --overwrite
+```
+
+Read **Accessibility** near the end of each `results/ticket11-*/report.txt`. Open its
+`network.gpkg` in QGIS and inspect the node/edge attribute tables. Inputs are viewable as
+`data/ticket11-demo/*-input.gpkg`; GraphML itself is not a QGIS vector layer. Known answers are
+saved in `data/ticket11-demo/expected.json`, with node arrays ordered by numeric `node_id`:
+
+| Scenario | Expected result and purpose |
+| --- | --- |
+| `two-node` | One two-way 1 km road, h=1 km: A=0.5 per node, total A=1, both vulnerabilities=1, road drop=1. |
+| `path-k2` | Three nodes joined by two 1 km roads, R=2 km: A=[0.75, 1, 0.75], total A=2.5; single vulnerabilities=[1, 0.5, 1], pair vulnerabilities=[1, 1, 1]. Each road's global drop is **0.6**, since closure leaves total A=1. |
+| `cutoff` | Spokes of 999, 1000 and 1001 m, R=1000 m. With w=2^(-0.999), A=[w+0.5, w, 0.5, 0]. Node 3 has missing vulnerability and `isolated_in_R=true`, despite being connected. |
+| `parallel-k2` | Two equal 1 km roads and a 4 km alternative. All single drops=0, both A=0.5. Closing both short roads leaves A=0.0625 each, giving pair vulnerability=0.875. The long alternative is drawn as a V; the two short roads overlap on the map. |
+| `directed` | A one-way three-node 1 km cycle, R=2 km: A=0.75 per node, total A=2.25, vulnerability=1, each road drop=4/9. Other removal metrics are configured undirected here; accessibility still uses outbound directed distances. |
+| `spatial-candidates` / `spatial-all` | The same seeded 100-node, 475-road spatial graph, with h=0.3 km and R=1.5 km. Baseline A must agree exactly. Every all-link single vulnerability must be at least its candidate-only counterpart. |
+
+The spatial examples use seed 42 and positive road lengths equal to Euclidean distance times
+a sampled tortuosity factor in [1, 1.3]. The manifest records generation details. The recorded
+runs evaluated **16 versus 475 roads**, with identical total A **252.114786799**. Mean vulnerability
+rose from **0.061904736** to **0.188544032**; 81 nodes had a strictly larger value with all roads
+evaluated. This illustrates screening coverage rather than a change to the accessibility formula.
+The seven output folders and `results/ticket11-verification.json` have already been generated
+and checked. The generator is tracked; generated inputs and results are ignored by Git.
+
+These are accessibility scenarios, not stochastic reliability tests: earlier pipeline stages
+still run with small settings, connectivity uses p0=0 and 64 samples, and travel time is disabled.
+The hand-computed fixtures and independent reference tests provide the correctness checks;
+random spatial examples provide broader topology and scope checks.
+
+```sh
+python -m pytest -q tests/test_accessibility.py
+```
+
+The tests compare every evaluated single-link loss against independent NetworkX recomputation
+on five seeded directed spatial graphs, check analytic bridges and non-uniform masses, and
+independently recompute the selected k=2 pairs. Further tests are listed in
+[plan/TEST_RECOMMENDATIONS.md](plan/TEST_RECOMMENDATIONS.md#11--hansen-accessibility).
+
+Cost grows with the evaluated links and sources reachable within R. The original plan budgets
+whole-city all-link runs at h=2 km (R=10 km) for Ada, and suggests h≤1 km for overnight laptop
+work. Those are planning assumptions, not measured guarantees. Start with candidate evaluation
+and a smaller frozen extract; inspect timing and memory before choosing a larger run. The
+100-node examples do not establish city-scale performance.
 
 ## Crucitti city comparison (Ticket 15)
 

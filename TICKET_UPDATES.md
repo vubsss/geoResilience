@@ -10,7 +10,7 @@
 - [x] **08 — Failure probabilities** — completed, tested and manually verified by you, including exact answers and three spatial scenarios; report interpretation documented.
 - [x] **09 — Connectivity reliability** — completed for now at your request; implementation and tests verified. Includes three exact-answer fixtures and three 200-node spatial scenarios; AP3 scope corrections and further testing recommendations documented.
 - [x] **10 — Travel-time reliability** — completed, tested and manually verified by you. Includes replaceable time models, exact route examples and a sparse spatial network; further validation recommendations documented.
-- [ ] **11 — Hansen accessibility (uniform masses)** — deferred at your request while the AP3/Hansen convention is considered.
+- [x] **11 — Hansen accessibility (uniform masses)** — completed, tested and manually verified by you on 12 October 2026, using the plan's exponential distance-decay definition.
 - [ ] **12 — WorldPop population** — not started.
 - [ ] **13 — Zone aggregation** — not started.
 - [ ] **14 — Scorecard and final report** — not started.
@@ -1842,3 +1842,142 @@ discrepancy remains open. Investigate the already-recommended support/offset, fi
 goodness-of-fit diagnostics on the saved centrality CSVs before changing the classifier; these
 checks do not require repeating exact shortest-path/node-isolation calculations. No analysis
 code, thresholds or result files were changed during this review update.
+
+## Ticket 11 — Hansen accessibility (uniform masses)
+
+Implemented on **12 October 2026**, after you requested using **the definition in the plan
+itself**. This resumes Ticket 11 and supersedes the earlier deferral notes. The ticket is
+**completed, tested and manually verified by you**, as confirmed on **12 October 2026**.
+Ticket 15's scientific mismatch and Ticket 12's population work retain their existing status.
+
+### Definition and documented clarifications
+
+- Used exactly the plan's `A_i = sum(W_j * exp(-beta*d_ij))` for destinations j other than i
+  with outbound directed distance `d_ij <= R`; beta=`ln(2)/(half_distance_km*1000)` and
+  R=`half_distance_km*1000*cutoff_factor`. Uniform unit destination masses give structural
+  accessibility. The network total is an unweighted sum over origins. Radius truncation
+  is part of the definition and the boundary is inclusive.
+- The earlier AP3 wording in the ticket is clarified: this is the plan's explicit exponential
+  variant, with no claim of equivalence to the alternative expression in Taylor et al.
+  No mathematical substitution was made. Road speeds and `analysis.directed_removal` do not
+  change this stage's directed distance definition.
+- Single-link vulnerability is exact over evaluated links. Default coverage is screening
+  candidates plus analytic bridges; `all_links: true` evaluates all non-self-loop physical
+  links. Unevaluated roads receive missing scores, not zero loss.
+- The planned k=2 search evaluates only pairs from each node's top three single-link closures.
+  Each selected pair is computed exactly, but this is not the global worst pair over all roads,
+  even with `all_links: true`. The acceptance wording now states that scope explicitly.
+- Retained zero-effect closures in top-three lists, because joint effects can be nonzero.
+  Ties retain smaller link IDs. With no evaluated links, single vulnerability is undefined;
+  with fewer than two, pair vulnerability is undefined. A=0 is separately flagged
+  `isolated_in_R` and has undefined relative loss.
+- The original Ada/laptop city-scale cost statements are documented as planning assumptions,
+  rather than guarantees established by these small examples.
+
+### Changes
+
+- Added `AccessibilityConfig` with validated finite positive half-distance/cutoff, k=1 or 2
+  and candidate/all-link selection; defaults match the plan.
+- Added `src/georesilience/accessibility.py`: chunked truncated baseline Dijkstra,
+  reversed-endpoint affected-source selection, exact source-only closure recomputation and
+  exact forward/reverse small-side bridge contribution losses. No dense node-by-link matrix
+  is retained; top-three state grows linearly with node count. The stage checks its working
+  memory allowance and caps its worker count accordingly.
+- Added an optional destination-weight vector to the computation API for Ticket 12, tested
+  with unequal and zero masses. Current pipeline weights remain one; population ingestion
+  and population-specific exports are still Ticket 12.
+- Integrated accessibility into the normal run, resolved YAML, GeoPackage, summary, text report,
+  runtime/computation metadata and three map figures. Outputs include node `hansen_a`, `vuln`,
+  `vuln_link_id`, `isolated_in_R`, plus `vuln_k2` when requested; edge `access_drop` and
+  `access_rank`. Extra audit fields are `access_top3_link_ids`, `vuln_k2_link_ids` and
+  `access_method`. Overwrite cleanup removes stale pair fields and figures.
+- Updated the connectivity report's scope sentence to point to the now-implemented separate
+  Hansen analysis, replacing its previous future-stage wording.
+- Added `examples/create_ticket11_demo.py`, generating seven offline scenarios, QGIS input
+  copies, YAML configs, known answers and a seeded spatial manifest. Generated data/results
+  remain ignored; the reproducible generator is tracked.
+- Updated README with formula, configuration, report interpretation, limitations and manual
+  checks. Updated the Ticket 11 specification and
+  [additional testing backlog](plan/TEST_RECOMMENDATIONS.md#11--hansen-accessibility).
+
+### Validation performed
+
+- Focused suite: **22 passed in 5.43 seconds**:
+
+  ```sh
+  python -m pytest -q tests/test_accessibility.py
+  ```
+
+  Checks hand-computed half-distance scores and unequal masses; directed outbound routing;
+  inside/exact/outside radius; zero scores and undefined results; memory/config validation;
+  parallel roads, loops and zero-effect pair synergy. Five seeded nine-node directed spatial
+  cases compare every single-link source loss to independent NetworkX full recomputation
+  within 1e-9 and compare node/global losses and selected pair maxima. Directed/undirected
+  path fixtures compare analytic bridges against full recomputation with unequal masses and
+  truncated radii. Integration checks cover exports, maps, reusable configs and overwrites.
+- Full ordinary offline suite: **281 passed, 4 skipped in 317.63 seconds**. The skips are the
+  opt-in slow case and three live-network cases; they were not run for this implementation.
+
+  ```sh
+  python -m pytest -q
+  ```
+
+- After the connectivity report's wording update, the combined accessibility/connectivity
+  regression suite passed: **55 passed in 21.95 seconds**. Refreshed all seven example output
+  folders so their reports contain that final wording; the mathematical implementation did
+  not change after the full-suite run.
+
+  ```sh
+  python -m pytest -q tests/test_accessibility.py tests/test_connectivity.py
+  ```
+
+- Generated and ran all seven examples, then independently compared the five small examples'
+  exported node/edge values with `expected.json` (absolute tolerance 1e-12, maximum observed
+  error 2.22e-16). The hand-check corrected the path fixture's expected global link loss to
+  **0.6**: intact total A=2.5, post-closure total A=1, so loss=(2.5−1)/2.5. The computed result
+  was already correct. The two parallel short roads each have zero single loss, but their
+  joint closure gives vulnerability **0.875**, as required.
+- The seed-42 spatial graph has **100 nodes and 475 roads**, with Euclidean lengths times
+  sampled tortuosity in [1, 1.3]. Candidate-only/all-link runs evaluated **16 / 475 links** at
+  half-distance **0.3 km**, R=**1.5 km**. Both have total A **252.11478679894805**. Mean
+  vulnerability is **0.06190473582165984 / 0.18854403236432712**; all-link vulnerability is
+  nondecreasing at every node and strictly larger at **81 nodes**. Verification evidence is
+  saved in `results/ticket11-verification.json`. Inspected the cutoff vulnerability and spatial
+  accessibility maps, including the undefined-node marker.
+- These tests verify the planned formula and shortcuts; they do not establish behavioural
+  validity, all-pairs optimality of k=2, or city-scale runtime/memory guarantees. Further
+  sensitivity, exhaustive-pair-gap and larger frozen-network checks are in the backlog.
+
+### Manual run and expected checks
+
+With the project environment activated:
+
+```sh
+python examples/create_ticket11_demo.py
+georesilience run --config data/ticket11-demo/two-node.yaml --overwrite
+georesilience run --config data/ticket11-demo/path-k2.yaml --overwrite
+georesilience run --config data/ticket11-demo/cutoff.yaml --overwrite
+georesilience run --config data/ticket11-demo/parallel-k2.yaml --overwrite
+georesilience run --config data/ticket11-demo/directed.yaml --overwrite
+georesilience run --config data/ticket11-demo/spatial-candidates.yaml --overwrite
+georesilience run --config data/ticket11-demo/spatial-all.yaml --overwrite
+```
+
+The output folders already exist from validation. Inspect **Accessibility** in each
+`results/ticket11-*/report.txt`, then its `network.gpkg` node/edge attributes and three new
+figures. For a quick first check, `two-node` has A=0.5 at both nodes and vulnerability=1.
+`path-k2` has A=[0.75, 1, 0.75], single vulnerability=[1, 0.5, 1], pair vulnerability=[1, 1, 1]
+and edge loss=0.6 for both roads. More known answers and QGIS instructions are in the
+[README Ticket 11 section](README.md#hansen-accessibility-ticket-11) and generated
+`data/ticket11-demo/expected.json`.
+
+### Manual verification — 12 October 2026
+
+You confirmed that you verified the Ticket 11 results. The checklist now marks the ticket
+completed. Individual accessibility scores are stored in the GeoPackage `nodes` layer's
+`hansen_a` field; `report.txt` prints total and mean accessibility rather than the complete
+vector. For `path-k2`, sorting by node IDs 0, 1 and 2 gives **[0.75, 1.00, 0.75]**.
+
+README now makes this output location explicit. The additional sensitivity, global-pair-gap
+and larger-network experiments remain follow-up recommendations, not completion blockers.
+No analysis code, result files or test outcomes changed during this documentation update.
