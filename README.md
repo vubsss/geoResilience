@@ -1450,6 +1450,10 @@ see [plan/TEST_RECOMMENDATIONS.md](plan/TEST_RECOMMENDATIONS.md#10--travel-time-
 
 ## Crucitti city comparison (Ticket 15)
 
+The [published historical dataset](#published-historical-ap2-networks) is now available as a
+separate offline comparison. The modern OSM experiments below remain useful sensitivity
+studies; they are preserved alongside the published-data run.
+
 This experiment compares approximately one-square-mile samples of Ahmedabad, Cairo,
 Los Angeles and Richmond, California, with [AP2](papers/AP2-centrality_measures_in_urban_networks.pdf),
 particularly its Figure 3. It uses the fixed centres in
@@ -1664,3 +1668,102 @@ The Cairo map's large spoke-like cluster is one such case. No-consolidation isol
 of this preprocessing choice; street-type effects require a separate, predefined filtering study.
 Window inspection shows irregular street patterns in Ahmedabad/Cairo and grids in Los Angeles/
 Richmond, but appearance does not establish a distributional verdict or verify a historical window.
+
+### Published historical AP2 networks
+
+The authors' [textbook dataset page](https://www.complex-networks.net/datasets.html#chap8)
+provides [cities.zip](https://www.complex-networks.net/datasets/cities.zip). Its README cites
+Crucitti, Latora and Porta, *Centrality measures in spatial networks of urban streets*,
+Physical Review E **73**, 036125 (2006), and Latora, Nicosia and Russo,
+*Complex Networks: Principles, Methods and Applications* (2017). Cite both when using the data,
+as requested by the archive. It contains 20 graphs, including AP2's 18 cities; we analyse the
+same four cities as the modern OSM comparison.
+
+These four graphs match AP2's node/edge counts exactly. Their road-length means and standard
+deviations match Table I of the authors' [companion Chaos paper](https://www.udsu-strath.com/wp-content/uploads/2010/06/PA2006_06new1.pdf)
+to its published precision:
+
+| City | Nodes | Roads | Mean length (m) | Standard deviation (m) |
+| --- | ---: | ---: | ---: | ---: |
+| Ahmedabad | 2,870 | 4,387 | 27.59 | 17.03 |
+| Cairo | 1,496 | 2,255 | 37.47 | 25.42 |
+| Los Angeles | 240 | 340 | 113.87 | 64.86 |
+| Richmond | 697 | 1,086 | 57.65 | 45.49 |
+
+This is the authors' published graph release. It was released with the 2017 textbook;
+the original GIS project, curved road shapes, geographic registration and original fitting
+software are not included. Provenance/counts/length statistics support its correspondence
+to AP2, without claiming bit-for-bit identity with an unavailable 2006 working directory.
+
+From the repository root with your project environment activated:
+
+```sh
+mkdir -p results/ticket15-published-download
+curl -fL https://www.complex-networks.net/datasets/cities.zip \
+  -o results/ticket15-published-download/cities.zip
+
+python -m georesilience.published_cities \
+  --archive results/ticket15-published-download/cities.zip \
+  --out results/ticket15-published-rerun --jobs 2 --max-memory-gb 1
+```
+
+For an offline rerun, use `results/ticket15-published/inputs/cities.zip` instead of downloading.
+The output directory must be new or empty. The pinned archive SHA-256 is
+`29552883de03463dbf5c2b2df69c1583d30014f83477c355fd7cd7eb1e9c3c61`;
+an altered archive is refused. Exact information centrality visits every node and can take
+tens of minutes. The existing modern OSM outputs are preserved.
+
+The loader cross-checks `.net` connectivity against `_edge_info.txt` coordinates/lengths,
+including multiplicity, finite values, positive lengths, consistent node positions, paper
+counts and length statistics. Source edge labels repeat in Ahmedabad/Cairo, so file-row
+identities preserve all roads. Analysis uses **no cleaning, reprojection, rescaling,
+consolidation or component selection**. Shortest paths use the shortest parallel road,
+consistently with the existing centrality implementation. Coordinates keep the source's
+approximately 1,560 m span, rather than being stretched to the modern 1,609 m square;
+small coordinate/road-length rounding differences are retained.
+
+Read `results/ticket15-published/crucitti_report.txt` and `comparison.csv` for independent
+framework inverse-distance and AP2 spatial comparisons. Each city has `report.txt`,
+`summary.json`, `centralities.csv` and `network.gpkg`. `figures/` contains combined information
+and betweenness CCDFs. `inputs/` preserves the archive, extracted four-city text files,
+citation README, file hashes and validation findings.
+
+Information still uses Ticket 07's statistical rules; AP2 reference betweenness compares
+exponential with Rayleigh, whose survival curve has the paper's Gaussian shape. A residual
+mismatch on the published graphs concerns calculation/statistical differences rather than
+the modern OSM window, filter or consolidation. Relative AIC/likelihood evidence alone is
+not a goodness-of-fit test. Do not retune thresholds to force historical agreement.
+
+The completed published-data run returned **MISMATCH under both conventions: information 2/4,
+betweenness 3/4**. Ahmedabad/Cairo information is `power_law`; Los Angeles/Richmond information
+is `gaussian` under the project's half-normal body rule, rather than AP2's `exponential`.
+Reference betweenness matches Ahmedabad, Cairo and Los Angeles; Richmond is `exponential`.
+Framework Richmond betweenness abstains. Both planned-city network labels are `inconclusive`.
+The unchanged information body models fix location at zero and fit full positive samples;
+this differs from reconstructing the paper's cumulative curve fits. Support/offset and fitting
+range deserve investigation before changing the classifier.
+
+There is useful numerical agreement: AP2 spatial information gives CCDF exponents **2.734**
+for Ahmedabad and **2.666** for Cairo (paper ≈2.74/2.63). Cairo/Richmond spatial-information
+Gini values **0.22794/0.19281** round to the paper's **0.23/0.19**. Independent NetworkX
+calculations on the original tables match both baseline efficiencies and three isolated-node
+scores per city within 3.30e-15; planned-city betweenness matches within 2.78e-17. Read
+`numerical_verification.json`, `independent_references.json`, `betweenness_verification.json`
+and `archive_inventory.json` alongside the reports. These verify data/calculations separately
+from the statistical labels. Full information coverage is 5,303 nodes, taking about 22 minutes
+on the two-worker run; timing varies by machine.
+
+For QGIS, open one city's `network.gpkg` in a **separate project** and add `nodes` and `edges`.
+They use an engineering CRS for local metre coordinates, with no known geographic registration;
+do not overlay them on OSM. Different cities have overlapping local coordinate ranges.
+Displayed edges are straight endpoint chords; `length_m` is the authors' road length used
+by Dijkstra. QGIS `$length` measures the chord and can differ. In this adapter the inherited
+`osm_way_ids` field contains source-table row identities, not OSM identifiers. Original
+`edge_num` labels remain in the saved tables. All roads are analysed as undirected.
+
+Offline regression tests:
+
+```sh
+PYTEST_DISABLE_PLUGIN_AUTOLOAD=1 python -m pytest -q \
+  tests/test_published_cities.py tests/test_crucitti.py tests/test_crucitti_inspection.py
+```

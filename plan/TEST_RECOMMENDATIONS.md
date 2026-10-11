@@ -265,11 +265,28 @@ these are implementation-stage results, not new runs for this update. See
 - [ ] Add small-sample/bootstrap goodness-of-fit diagnostics and tail-threshold sensitivity for
   observed city distributions. Existing likelihood/AIC evidence compares alternatives; it does
   not establish an absolute model fit. Keep density and CCDF exponents distinct.
-- [ ] If original Jacobs/AP2 map windows become available, digitise and validate their topology
-  separately from modern OSM. Assess effects of the all-network filter, component removal,
-  boundary treatment and consolidation before attributing a mismatch to a city-development class.
-  Treat modern-data qualitative agreement as limited evidence, not historical numerical
-  replication or proof of a universal city classification.
+- [x] Obtain the authors' published historical graphs and cross-check connectivity, coordinates,
+  N/K and road-length statistics. The textbook's `cities.zip` release cites the original paper;
+  all four validation cities match its counts and the companion paper's rounded length statistics.
+  Preserve the archive and hashes; test repeated edge labels, parallel roads, corrupt tables,
+  hand-calculated efficiencies, local-CRS exports and refusal to overwrite previous results.
+- [x] Run the four published graphs unchanged with exact information for all 5,303 nodes.
+  Both conventions give information 2/4 and betweenness 3/4: MISMATCH. Independently verify
+  both efficiencies/three removals per city with NetworkX (maximum error 3.30e-15), planned-city
+  betweenness (2.78e-17), all source coordinates/lengths and 18-city N/K inventory. Spatial
+  information Ginis for Cairo/Richmond round to AP2's 0.23/0.19; exponents and fitting differences
+  are documented in TICKET_UPDATES. Preserve modern OSM experiments as separate comparisons.
+- [ ] On the published graphs, predefine support/offset and fitting-range diagnostics for
+  cumulative curves, then add absolute goodness-of-fit/bootstrap checks. Current whole-positive-
+  body exponential/half-normal fits fix location at zero; this differs from reconstructing AP2's
+  curve-fitting procedure. Examine planned-city information and Richmond betweenness residuals
+  without choosing model settings by their match counts. Gini/exponent agreement supports the
+  numerical comparison but does not validate the classification rule or prove a distribution.
+- [ ] Geographically register the original Jacobs/AP2 windows and recover curved road geometry
+  if those original GIS/map resources become available. Published graph data now supply topology,
+  coordinates and metric lengths, so digitisation is unnecessary for this graph comparison.
+  Keep modern filter/component/boundary/consolidation sensitivity studies separate and do not
+  interpret qualitative agreement as proof of a universal city classification.
 
 ## 16 — Ada runbook (prospective)
 

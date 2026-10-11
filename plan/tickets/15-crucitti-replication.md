@@ -8,13 +8,15 @@ It writes its own report, which can be cited in the project write-up.
 
 **Blocked by:** 07
 
-**Status:** implemented and tested, including the four-city live run; awaiting manual verification.
-Both framework and AP2-reference experiments returned MISMATCH; see TICKET_UPDATES for findings.
+**Status:** implemented, tested and manually reviewed, including the published-data rerun.
+The planned-city classification discrepancy remains open.
+Both modern and published-data comparisons returned MISMATCH; the published graphs improve
+agreement to information 2/4 and betweenness 3/4 under both conventions. See TICKET_UPDATES.
 
 ## Behaviour
 
 ### Samples
-Each sample is a square 1609 m × 1609 m, centred on the point below. Build it as a projected square buffer around the point, then pass it as a `polygon` input. Crucitti's exact sample locations aren't published, so these are historic centres (self-organised) and downtown grids (planned):
+For the modern OSM baseline, each sample is a square 1609 m × 1609 m, centred on the point below. Build it as a projected square buffer around the point, then pass it as a `polygon` input. The historical windows have not been geographically registered, so these are approximate historic centres (self-organised) and downtown grids (planned). The authors' published historical graphs were subsequently located; see the separate comparison below.
 
 | City | Class (paper) | Centre (lat, lon) |
 |---|---|---|
@@ -88,3 +90,20 @@ are refined as follows; details and manual commands are in
 - **Separate outcomes:** show independent framework and reference statuses. The original
   >=3/4 condition for each centrality is retained as a project criterion. The report heading
   describes the framework result. Mismatch/inconclusive evidence is preserved, not retuned away.
+
+## Published historical data follow-up
+
+On 11 October 2026, the authors' [textbook dataset page](https://www.complex-networks.net/datasets.html#chap8)
+was located. Its `cities.zip` release cites Crucitti, Latora and Porta (2006) and contains
+20 graphs, including all 18 cities listed in AP2. The four validation cities match AP2's
+node/edge counts and the companion Chaos paper's rounded edge-length means/standard deviations.
+
+The separate `python -m georesilience.published_cities --archive cities.zip --out DIR`
+workflow preserves the authors' topology, local coordinates and metric road lengths without
+OSM downloading, projection, simplification, consolidation or component selection. It computes
+the same two efficiency conventions and uses the existing fitting rules and pass criteria.
+It pins and copies the archive, validates topology against the endpoint table, and retains
+parallel roads/repeated source edge labels. Geographic registration and original curved-road
+shapes are unavailable in this release. This resolves access to the published graph data;
+it does not reproduce the authors' original statistical fitting software. See
+[README](../../README.md#published-historical-ap2-networks) for commands and interpretation.

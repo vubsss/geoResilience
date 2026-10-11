@@ -256,6 +256,9 @@ def _write_layers(graph, links, node_metrics, degree, scores, path):
     frame.to_file(path, layer="nodes", driver="GPKG", engine="pyogrio")
     frame.drop(columns="geometry").to_csv(path.parent / "centralities.csv", index=False)
     edges = [{key: value for key, value in row.items() if not key.startswith("_")} for row in links]
+    if not graph.is_directed():
+        for row in edges:
+            row["oneway"] = False
     gpd.GeoDataFrame(edges, geometry="geometry", crs=graph.graph["crs"]).to_file(
         path, layer="edges", driver="GPKG", engine="pyogrio", mode="a")
 
@@ -268,8 +271,16 @@ def analyse_city(city, source, manifest, folder, *, n_jobs, max_memory_gb, toler
     # Fixed 15 m default is retained even when it changes dead ends by >=5%;
     # preserve and expose the warning instead of silently retuning the experiment.
     graph, _, cleaning = load_and_clean(config, undirected=True, enforce_dead_end_guard=False)
+    return analyse_graph(city, graph, manifest, folder, analysis_config=config.analysis,
+                         cleaning=cleaning, started=started)
+
+
+def analyse_graph(city, graph, manifest, folder, *, analysis_config, cleaning, started=None,
+                  source_note=CAVEAT, cleaning_lines=None):
+    """Compare conventions on an already prepared graph without changing its topology."""
+    started = perf_counter() if started is None else started
     links = _link_rows(graph)
-    analysis, metrics, edge_scores, statistics, computation = compute_centralities(graph, links, config.analysis)
+    analysis, metrics, edge_scores, statistics, computation = compute_centralities(graph, links, analysis_config)
     for row in links:
         row["edge_betweenness"] = edge_scores[row["link_id"]]
     n = len(analysis.node_ids)
@@ -299,10 +310,11 @@ def analyse_city(city, source, manifest, folder, *, n_jobs, max_memory_gb, toler
     path = folder / "network.gpkg"
     path.unlink(missing_ok=True)
     _write_layers(graph, links, metrics, degree, scores, path)
-    lines = [f"{city.name} — Ticket 15", CAVEAT, f"Nodes: {n}; physical links: {len(links)}",
+    lines = [f"{city.name} — Ticket 15", source_note, f"Nodes: {n}; physical links: {len(links)}",
              f"Information coverage: all ({n}/{n}); isolated node retained for every removal.",
              f"Inverse-distance efficiency (1/m): {baseline[0]:.9g}",
-             f"AP2 spatial efficiency (dimensionless): {baseline[1]:.9g}", "", *cleaning_report(cleaning)]
+             f"AP2 spatial efficiency (dimensionless): {baseline[1]:.9g}", "",
+             *(cleaning_report(cleaning) if cleaning_lines is None else cleaning_lines)]
     for convention, summary in comparisons.items():
         lines.extend(["", convention, f"Network label: {summary['network_label']}",
                       f"Betweenness consistency: {summary['consistency']}"])
@@ -384,7 +396,7 @@ def write_comparison_csv(summary, path):
                     **{f"{name}_match": row[name] == row["expected"][name] for name in ("information", "betweenness")}})
 
 
-def write_comparison_figures(values, folder, summary):
+def write_comparison_figures(values, folder, summary, *, information_title=None):
     import matplotlib.pyplot as plt
     folder.mkdir(parents=True, exist_ok=True)
     fig, axes = plt.subplots(1, 2, figsize=(12, 5))
@@ -398,7 +410,7 @@ def write_comparison_figures(values, folder, summary):
                          ylabel="Fraction of positive scores ≥ x", title=convention)
         axes[column].grid(alpha=.2)
         axes[column].legend(fontsize="small")
-    fig.suptitle("Modern city samples: information CCDF (AP2 Fig. 3 comparison)")
+    fig.suptitle(information_title or "Modern city samples: information CCDF (AP2 Fig. 3 comparison)")
     fig.tight_layout()
     fig.savefig(folder / "information_ccdf.png", dpi=150)
     plt.close(fig)

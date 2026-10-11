@@ -14,7 +14,7 @@
 - [ ] **12 — WorldPop population** — not started.
 - [ ] **13 — Zone aggregation** — not started.
 - [ ] **14 — Scorecard and final report** — not started.
-- [ ] **15 — Crucitti comparison** — implemented and tested, including the four-city live run, 15 m versus no-consolidation comparison, and window/street-type inspection; both comparisons returned MISMATCH at both settings. Awaiting your manual verification.
+- [ ] **15 — Crucitti comparison** — implemented, tested and manually reviewed, including modern OSM sensitivity/inspection and the authors' published historical graphs. Historical data: 2/4 information and 3/4 betweenness matches under both conventions; MISMATCH. Planned-city classification discrepancy remains open.
 - [ ] **16 — Ada runbook** — not started.
 
 Additional validation ideas for every ticket are tracked separately in
@@ -1439,7 +1439,8 @@ results above are preserved; no new software tests were necessary for this docum
 ## Ticket 15 — Four-city Crucitti comparison
 
 Ticket **15** was implemented on **11 October 2026**, ahead of Ticket 11 at your request.
-It is **implemented and automatically verified, awaiting your manual verification**.
+It is **implemented, automatically verified and manually reviewed**. The planned-city
+classification discrepancy remains open; manual review does not change the benchmark result.
 The predefined four-city experiment ran successfully, but **both comparisons returned MISMATCH**.
 Ticket 11 remains deferred while the Hansen/AP3 definition is considered.
 
@@ -1710,3 +1711,134 @@ XYZ basemap for geographic context. Do not join the two node layers by ID: conso
 junction identities and populations. Classifier agreement alone cannot select a valid window,
 filter or tolerance. Further location, filtering and fit diagnostics remain in
 [plan/TEST_RECOMMENDATIONS.md](plan/TEST_RECOMMENDATIONS.md#15--crucitti-comparison).
+
+### Published historical networks follow-up — 11 October 2026
+
+At your request, searched for the original graph data and found the authors'
+[textbook dataset page](https://www.complex-networks.net/datasets.html#chap8) and
+[cities.zip release](https://www.complex-networks.net/datasets/cities.zip). Its README explicitly
+references Crucitti, Latora and Porta, Physical Review E **73**, 036125 (2006), and Latora,
+Nicosia and Russo's 2017 textbook, requesting citations to both. The archive contains 20 cities,
+including the 18 in AP2. This supersedes the earlier assumption that only maps or modern
+reconstructions could be obtained. The archive does not contain the original GIS project,
+curved road shapes, geographic registration or original statistical fitting software.
+
+The four validation cities match AP2's N/K exactly and the companion Chaos paper's rounded
+road-length means/standard deviations. The verified archive SHA-256 is
+`29552883de03463dbf5c2b2df69c1583d30014f83477c355fd7cd7eb1e9c3c61`.
+Author provenance plus these checks supports correspondence to the paper, without claiming
+bit-for-bit identity with an unavailable 2006 working directory.
+
+Changes:
+
+- Added `python -m georesilience.published_cities --archive FILE --out DIR`, an offline,
+  checksum-pinned runner for the published four-city data. It refuses nonempty outputs,
+  copies the archive and relevant original files, and records file hashes, versions and
+  input-validation results. The previous OSM experiments remain untouched.
+- Cross-check `.net` connectivity against every endpoint/length-table row, with multiplicity,
+  coordinate consistency, integer identifiers, finite values, positive lengths and published
+  counts/length statistics. There are 199/68 repeated source edge labels in Ahmedabad/Cairo;
+  use file-row identities without dropping any roads. Preserve 12/3/1/2 parallel pairs,
+  respectively; metric shortest paths select the shorter parallel road.
+- Extracted `analyse_graph` from the existing modern-city runner, sharing centralities,
+  both exact information conventions, classification and exports without applying cleaning
+  to published graphs. The modern entry point keeps its existing behaviour. Figure titles
+  and source notes identify published data correctly. Undirected graph exports mark roads
+  as two-way.
+- All original nodes, coordinates and metric lengths are retained. No OSM downloads,
+  simplification, reprojection, consolidation, coordinate rescaling or component selection
+  enter this historical-data experiment. The approximately 1,560 m local coordinate span and
+  small coordinate/length rounding discrepancies remain as supplied.
+- Added eight offline regression cases for ingestion, malformed data, repeated labels,
+  parallel-road retention/minimum distances, archive integrity, overwrite refusal, local CRS,
+  full four-city output generation and hand-calculated inverse/spatial efficiencies.
+  The relevant regression suite passed: **57 passed, 3 skipped** (26.35 seconds).
+- Added source citations, commands, interpretation and QGIS instructions to README; updated
+  Ticket 15's plan and the additional testing recommendations. The published-data run is a
+  documented extension of the modern OSM plan, with the fitting rules and pass criteria unchanged.
+
+Manual rerun, with your project environment activated:
+
+```sh
+python -m georesilience.published_cities \
+  --archive results/ticket15-published/inputs/cities.zip \
+  --out results/ticket15-published-rerun --jobs 2 --max-memory-gb 1
+```
+
+Read `results/ticket15-published/crucitti_report.txt`, `comparison.csv` and per-city reports;
+inspect the CCDF plots and source-validation manifest. Open each city's GeoPackage in a
+separate QGIS project: local engineering coordinates do not align with an OSM basemap.
+The displayed straight endpoint chords can differ from the authors' `length_m` values;
+Dijkstra uses those original metric lengths. The inherited `osm_way_ids` export field holds
+source-table row identities in this adapter. Original labels remain in the saved text files.
+You subsequently reviewed the published-data rerun manually; see the review note below.
+Ticket 11 remains deferred.
+
+Published-data results (all **5,303 nodes** evaluated, two workers, 1 GB budget; about 22 minutes):
+
+| City | N / roads | Expected information | Obtained information (both conventions) | Expected betweenness | Framework / AP2-reference betweenness |
+| --- | --- | --- | --- | --- | --- |
+| Ahmedabad | 2870 / 4387 | power_law | power_law | exponential | exponential / exponential |
+| Cairo | 1496 / 2255 | power_law | power_law | exponential | exponential / exponential |
+| Los Angeles | 240 / 340 | exponential | gaussian | gaussian | gaussian / gaussian |
+| Richmond | 697 / 1086 | exponential | gaussian | gaussian | inconclusive / exponential |
+
+Both comparisons return **MISMATCH: information 2/4, betweenness 3/4**. This improves upon
+the modern OSM experiments (framework information 0/4; reference information 1/4;
+betweenness 2/4), but the project criterion requires at least 3/4 in **each** centrality.
+The planned cities' `gaussian` information verdict means the existing half-normal body wins
+under Ticket 07's rules; their network labels therefore abstain as `inconclusive`.
+
+The AP2 spatial information fit gives density alpha **3.7342** / CCDF gamma **2.7342** for
+Ahmedabad (paper gamma ≈2.74), and alpha **3.6663** / gamma **2.6663** for Cairo (paper ≈2.63).
+These are contextual comparisons, not exact-exponent pass targets. Additional numerical
+diagnostics give spatial-information Gini **0.227938** for Cairo and **0.192814** for Richmond,
+matching the paper's rounded **0.23** and **0.19**. The inverse-distance Ginis are instead
+0.210320 and 0.201384. This supports the paper's spatial convention for historical comparisons
+without changing the production convention.
+
+Independent verification:
+
+- All 18 AP2 cities' N/K match the archive; `archive_inventory.json` records the checks.
+  The extra two archive graphs are Irvine1/Irvine2, outside the four-city analysis.
+- NetworkX all-pairs weighted Dijkstra directly on the original endpoint tables reproduces
+  both baseline efficiencies and three node isolations per city, retaining original N/coordinates.
+  Maximum information-score error is **3.30e-15**; maximum baseline error **1.56e-15**.
+  `independent_references.json` and `numerical_verification.json` preserve the comparisons.
+- Both planned cities' full weighted betweenness vectors match independent NetworkX Brandes
+  calculations within **2.78e-17**; see `betweenness_verification.json`.
+- Every exported node coordinate and road length matches the source table exactly; straight
+  endpoint geometries align with nodes (maximum error 0 m). Archive/extracted file hashes
+  remain unchanged, and each city retains all published nodes and roads.
+- The long-running analysis loaded the exporter before the undirected display-flag fix;
+  its four output edge layers were updated to mark `oneway=false`. Geometry, lengths, nodes
+  and centralities were verified unchanged. Future runs use the corrected exporter directly;
+  this one-time output correction is recorded in `run_config.json`.
+
+Remaining disagreement must be investigated as a statistical/implementation comparison,
+not attributed to modern OSM windows, street types or consolidation. Our information body
+fits fix location at zero and compare full positive samples; AP2 describes cumulative curve
+fits without supplying its fitting code. A relative half-normal preference does not prove
+an absolute Gaussian fit. Predefined support/offset, fitting-range and goodness-of-fit checks
+are recommended next; no classifier thresholds or distributions were changed to force agreement.
+
+### Manual review of the published-data rerun — 11 October 2026
+
+You confirmed reviewing `results/ticket15-published-rerun/` manually and observed that
+Ahmedabad/Cairo receive the expected scale-free labels while Los Angeles/Richmond receive
+`inconclusive`. The rerun reproduces the earlier distribution verdicts and match counts.
+
+For both planned cities, information coverage is complete (240/240 and 697/697 nodes), with
+no fitting error. Their information-distribution verdict is `gaussian`, meaning the existing
+half-normal body model wins under the project rules. The final network decision accepts only
+`power_law → scale-free` and `exponential → exponential` when full information is available;
+`gaussian` therefore maps to `inconclusive`. This is a network-label abstention, rather than
+a missing-data or unfinished-calculation result. Los Angeles has the expected Gaussian-shaped
+betweenness, but betweenness is a consistency check and does not override full information.
+Richmond's betweenness remains inconclusive in the framework and exponential in the AP2 reference.
+
+Manual review is recorded. The benchmark remains MISMATCH, and the planned-city classification
+discrepancy remains open. Investigate the already-recommended support/offset, fitting-range and
+goodness-of-fit diagnostics on the saved centrality CSVs before changing the classifier; these
+checks do not require repeating exact shortest-path/node-isolation calculations. No analysis
+code, thresholds or result files were changed during this review update.
