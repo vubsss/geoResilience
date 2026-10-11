@@ -10,11 +10,11 @@
 - [x] **08 — Failure probabilities** — completed, tested and manually verified by you, including exact answers and three spatial scenarios; report interpretation documented.
 - [x] **09 — Connectivity reliability** — completed for now at your request; implementation and tests verified. Includes three exact-answer fixtures and three 200-node spatial scenarios; AP3 scope corrections and further testing recommendations documented.
 - [x] **10 — Travel-time reliability** — completed, tested and manually verified by you. Includes replaceable time models, exact route examples and a sparse spatial network; further validation recommendations documented.
-- [ ] **11 — Hansen accessibility (uniform masses)** — not started.
+- [ ] **11 — Hansen accessibility (uniform masses)** — deferred at your request while the AP3/Hansen convention is considered.
 - [ ] **12 — WorldPop population** — not started.
 - [ ] **13 — Zone aggregation** — not started.
 - [ ] **14 — Scorecard and final report** — not started.
-- [ ] **15 — Crucitti replication** — not started.
+- [ ] **15 — Crucitti comparison** — implemented and tested, including the four-city live run, 15 m versus no-consolidation comparison, and window/street-type inspection; both comparisons returned MISMATCH at both settings. Awaiting your manual verification.
 - [ ] **16 — Ada runbook** — not started.
 
 Additional validation ideas for every ticket are tracked separately in
@@ -688,7 +688,7 @@ strategy and metric; these finite examples do not establish universal model supe
 Ticket **07** was implemented on **10 October 2026** and is **completed and manually verified
 by you**, as confirmed on **11 October 2026**. Verification includes the requested
 **five ER + five scale-free graph benchmark** and review of its inconclusive labels.
-Tickets 08–10 are documented below; tickets 11–16 have not been started.
+Tickets 08–10 and 15 are documented below; tickets 11–14 and 16 have not been implemented.
 
 ### Changes
 
@@ -1435,3 +1435,278 @@ interval coverage including rare failures, histogram-tail accuracy, custom-provi
 across workers, real-road/time-model comparisons and larger memory/disk benchmarks. These do
 not block completion and have not been run for this documentation update. Existing automated
 results above are preserved; no new software tests were necessary for this documentation change.
+
+## Ticket 15 — Four-city Crucitti comparison
+
+Ticket **15** was implemented on **11 October 2026**, ahead of Ticket 11 at your request.
+It is **implemented and automatically verified, awaiting your manual verification**.
+The predefined four-city experiment ran successfully, but **both comparisons returned MISMATCH**.
+Ticket 11 remains deferred while the Hansen/AP3 definition is considered.
+
+### Changes
+
+- Added `georesilience validate crucitti --out DIR`, with `--download-only`, `--offline`,
+  `--inputs`, `--overwrite`, `--jobs`, `--max-memory-gb`, `--consolidation-m` and `--no-figures`.
+- Added `src/georesilience/crucitti.py`: projected-square construction, frozen downloads,
+  paired exact information calculations, classification, independent comparison counts,
+  reports, CSV/JSON, GeoPackages and cumulative-distribution plots.
+- Downloaded the four predefined **1609 m × 1609 m** OSM `all` samples. Preserved raw GraphML,
+  boundary GeoJSON, provenance/checksums and a derived QGIS input copy under
+  `results/ticket15-crucitti/inputs/<city>/`. Reruns verify saved GraphML/boundary hashes and
+  reuse them; `--overwrite` refreshes analysis results, never source snapshots.
+- The focused workflow reuses existing centrality and fitting functions. It skips link damage,
+  robustness, failure probabilities, connectivity and time reliability. Every cleaned node gets
+  information centrality under both conventions; no candidate-only fallback is permitted.
+- Added scoped cleaning options that ignore one-way restrictions before simplification and
+  select the largest undirected connected component. Ordinary analysis defaults are preserved.
+- Each city writes `network.gpkg` (`nodes`, `edges`), `centralities.csv`, `summary.json` and
+  `report.txt`. Node fields include `information_inverse`, `information_spatial`, betweenness,
+  closeness, straightness and degree. The aggregate writes `crucitti_report.txt`, `comparison.json`,
+  eight-row `comparison.csv`, `run_config.json` and two combined CCDF figures.
+- Added `tests/test_crucitti.py` and README commands, report interpretation and limitations.
+  Updated the ticket specification's refinement notes and the testing-recommendations backlog.
+  Generated inputs/results remain gitignored; implementation, tests and documentation are source.
+
+### Deviations and scientific conventions
+
+The AP2 review identified definition differences, documented before implementation and retained
+explicitly rather than changing Tickets 03/05/07:
+
+1. **Two comparisons.** `framework_inverse_distance` retains existing `mean(1/d)` information
+   and Ticket 07 classification. `ap2_spatial` uses AP2's `mean(d_E/d)` information, plus
+   an exponential-versus-Rayleigh body comparison for betweenness. Both information efficiencies
+   share each removal's Dijkstra blocks. Remove all incident edges, retain original N and
+   coordinates, exclude self-pairs and give unreachable pairs zero contribution.
+2. **Gaussian cumulative curve.** AP2 Fig. 3's `exp(-C²/(2σ²))` is a Rayleigh survival function;
+   Ticket 07's half-normal body has a different survival function. The reference diagnostic uses
+   zero-location MLEs and our 10-AIC-unit threshold. Information uses existing modern tail rules.
+   These fitting procedures do not reproduce AP2's original estimation methodology; no bootstrap
+   goodness-of-fit test was added. Production classification is unchanged.
+3. **Exponent convention.** AP2's gamma describes its CCDF; our alpha describes a fitted density.
+   Report both, using the ideal continuous relationship gamma = alpha - 1. Historical exponents
+   are context, not pass targets.
+4. **Fixed consolidation.** Keep the ticket's default 15 m tolerance. In validation only, the
+   ordinary >=5% dead-end-change guard becomes a recorded warning. This allows the predefined
+   experiment to complete without automatically changing tolerance. The observed changes below
+   are substantial and materially limit interpretation. Ordinary `run` keeps its strict guard.
+5. **Scope.** AP2 Ahmedabad had 2,870 nodes, so the original ticket's estimated upper size of
+   about 2,000 was not reliable. Modern sample counts differ further. No original georeferenced
+   AP2 windows were supplied; the ticket's approximate centres are kept fixed. A modern OSM
+   comparison is not a historical numerical replication or proof of a universal city taxonomy.
+6. **Statuses.** Each convention independently requires >=3/4 information matches AND >=3/4
+   betweenness matches. This is a project criterion, not AP2's own test. The report heading/root
+   JSON status refer to the framework result. MISMATCH exits 0; operational failures exit nonzero.
+   Inconclusive fits are abstentions and never count as matches. An inconclusive network label
+   can also result from a Gaussian information fit, because only power-law/exponential information
+   shapes map to network labels. An interrupted analysis removes stale aggregate reports.
+
+### Actual four-city findings
+
+Inputs were retrieved on **11 October 2026** with OSMnx **2.1.1**, using the ticket's centres
+unchanged. These timestamps describe retrieval; OSMnx response caching can affect the underlying
+data vintage. Primary settings: **15 m consolidation, 2 workers, 1 GiB configured working budget**.
+
+| City | Cleaned nodes / physical links | Framework information | AP2-reference information | Betweenness (both comparisons) |
+| --- | --- | --- | --- | --- |
+| Ahmedabad | 436 / 624 | gaussian | gaussian | exponential |
+| Cairo | 547 / 860 | exponential | power_law | exponential |
+| Los Angeles | 441 / 1,332 | gaussian | gaussian | exponential |
+| Richmond, CA | 343 / 607 | power_law | power_law | exponential |
+
+- **Framework:** information **0/4**, betweenness **2/4** → **MISMATCH**.
+- **AP2 reference:** information **1/4**, betweenness **2/4** → **MISMATCH**.
+- No distribution verdict was inconclusive in this run. Ahmedabad and Los Angeles nevertheless
+  have inconclusive network labels because their information verdict is Gaussian.
+- AP2-reference Cairo's fitted density alpha is approximately **3.11583**, corresponding to
+  ideal CCDF gamma **2.11583**. This does not reproduce the paper's reported gamma 2.63.
+- Following the geometry correction documented below, exact information calculations took
+  approximately **6.15 s** (Ahmedabad), **11.60 s** (Cairo), **5.05 s** (Los Angeles), **4.14 s**
+  (Richmond). The corrected offline analysis completed in about **40 seconds**, excluding downloads.
+- Consolidation changed dead ends from **198→125 (36.9%)**, **680→196 (71.2%)**,
+  **412→148 (64.1%)**, and **205→91 (55.6%)**, respectively. Inspect raw versus cleaned maps.
+  No settings were changed to improve agreement. The separate no-consolidation experiment and
+  window/street-type audit are documented below. The mismatch does not by itself identify which of
+  sample location, modern data, network filtering, preprocessing or fitting caused disagreement.
+
+### Verification and manual commands
+
+- Full offline regression: **239 passed, 4 skipped** in **305.40 seconds**, including the initial
+  18 Ticket 15 cases. Skips are the existing three live OSM tests and the opt-in large benchmark.
+  Final targeted regression: **38 passed, 3 skipped** in **18.29 seconds**, covering all **19**
+  Ticket 15 tests plus existing input/cleaning and CLI tests. This includes the additional
+  undefined-efficiency/disconnected-baseline case and final provenance/CSV checks, with no warnings.
+- Known-answer path: lengths 3 and 4 at a right angle give inverse efficiency **61/252** and
+  AP2 spatial efficiency **19/21**; endpoint losses differ while centre isolation gives 1 in both.
+  Seeded random graphs agree with independent NetworkX shortest paths to **1e-12**. Tests cover
+  fixed-N disconnections, unit scaling, chunk/worker settings, zero spatial efficiency, one-way
+  components, explicit cleaning warnings, input tampering/settings mismatch, offline reuse,
+  report/count logic, QGIS/CSV/JSON outputs, overwrite cleanup and interrupted aggregate cleanup.
+- On all four actual outputs, independently rebuilt graphs from exported GeoPackages and checked
+  both baseline efficiencies and **three node removals per city** against NetworkX Floyd–Warshall
+  recomputation. Scores agree within **1e-10**. Verified raw/cleaned layer counts, finite scores,
+  complete information coverage, CSV match counts and JSON agreement. Both CCDF plots were
+  visually inspected. Numerical tests passing does not make the empirical classification match.
+- `git diff --check` and local documentation-file link validation passed. Verification used
+  Python **3.13.3** in the existing temporary environment; no new dependency was required.
+
+With your environment activated, from the repository root:
+
+```sh
+# Existing frozen inputs are ready; this reruns the four primary analyses.
+georesilience validate crucitti --out results/ticket15-crucitti --offline --overwrite --jobs 2
+
+PYTHONPATH= PYTEST_DISABLE_PLUGIN_AUTOLOAD=1 python -m pytest -q tests/test_crucitti.py
+
+# Separate sensitivity study; keep the primary experiment intact.
+# Add --overwrite to rerun an existing sensitivity output directory.
+georesilience validate crucitti --out results/ticket15-no-consolidation \
+  --inputs results/ticket15-crucitti/inputs --offline --consolidation-m 0 --jobs 2
+```
+
+Read `results/ticket15-crucitti/crucitti_report.txt`, then each city's `report.txt` for cleaning
+warnings and fit reasons. Compare node values in `centralities.csv` and `network.gpkg` with the
+two figure panels. QGIS can open both `inputs/<city>/input.gpkg` and `<city>/network.gpkg` directly.
+Further sensitivity and historical-data recommendations remain in
+[plan/TEST_RECOMMENDATIONS.md](plan/TEST_RECOMMENDATIONS.md#15--crucitti-comparison).
+
+### Geometry correction discovered during mismatch review — 11 October 2026
+
+When you asked why the study mismatched, an audit found a bug introduced in Ticket 15's
+undirected preprocessing. `MultiGraph.to_directed()` copies a road's geometry to both arcs
+without reversing its coordinates. OSMnx consolidation assumes geometry runs from u to v
+when attaching junction centroids. Wrong-way copies therefore acquired artificial backtracking
+and unequal lengths; physical-link grouping could count the two directions separately.
+
+- Corrected geometry orientation immediately after undirected conversion and before
+  simplification/consolidation. Added `cleaning.arc_geometries_reoriented` for auditability.
+- Added two regression cases, with and without prior simplification. Before the fix, a toy
+  junction merge incorrectly produced eight physical links; after the fix it produces the
+  expected four, total length **310 m**, aligned endpoints and equal reciprocal arc lengths.
+- Preserved the previous outputs in `results/ticket15-crucitti-before-geometry-fix/`, labelled
+  `SUPERSEDED.txt`. Recomputed all four cities in the original output directory, using the
+  **same frozen input checksums, centres, 15 m tolerance and fitting rules**. The table above
+  now contains corrected physical-link counts and exponents.
+- Corrected total road lengths are **60.553 km**, **92.098 km**, **153.764 km**, **67.639 km**
+  for Ahmedabad, Cairo, Los Angeles and Richmond. Previous values were **72.392**, **138.515**,
+  **248.386**, **102.669 km**. Node counts and dead-end-change warnings are unchanged.
+- **Classification verdicts and both match counts are unchanged.** Cairo and Richmond scores
+  changed; Ahmedabad and Los Angeles analysis weights agree to numerical precision because
+  the minimum-parallel-edge analysis had already selected the correctly oriented counterpart.
+  This was a real bug, but fixing it does not explain away the remaining scientific mismatch.
+- Post-fix targeted regression: **40 passed, 3 skipped** in **18.61 s**, including all **21**
+  Ticket 15 cases and existing input/cleaning/CLI cases. The earlier 239-test full-suite result
+  predates this correction. All four corrected outputs were independently checked for aligned
+  non-loop edge endpoints, paired physical roads, both baseline efficiencies and three node
+  removals per city using Floyd–Warshall. The earlier shortest-path tests had confirmed arithmetic
+  on the constructed graphs; they had not checked that preprocessing preserved road geometry.
+
+Remaining explanations require controlled experiments rather than a single claimed cause:
+approximate modern windows versus historical samples, the `all` filter's street/path coverage,
+substantial intersection consolidation, and modern fitting rules. For example, corrected
+Richmond's AP2-reference information verdict selects a power-law **tail of 96/343 nodes**
+(`p_exp ≈ 0.02185`), while its full-body exponential fit beats half-normal (`delta_aic ≈ -41.08`).
+The ordered Ticket 07 rules give the qualifying tail priority; that is not a claim that the
+entire distribution is power-law or that Richmond is historically self-organised. A predefined
+no-consolidation study and mapped sample-window review are documented in the follow-up below.
+
+### Consolidation sensitivity and sample inspection — 11 October 2026
+
+At your request, compared the corrected 15 m experiment with consolidation disabled, preserving
+the four frozen inputs, centres, `all` filter, two workers, 1 GiB budget and classification rules.
+The additional output directory is `results/ticket15-no-consolidation/`; primary outputs remain
+in `results/ticket15-crucitti/`. This is an additional diagnostic study, not a retuned primary run.
+
+| City | Nodes: 15 m → 0 m | Links: 15 m → 0 m | Framework information: 15 m → 0 m | AP2-reference information: 15 m → 0 m |
+| --- | --- | --- | --- | --- |
+| Ahmedabad | 436 → 726 | 624 → 935 | gaussian → gaussian | gaussian → gaussian |
+| Cairo | 547 → 2,166 | 860 → 2,676 | exponential → exponential | power_law → power_law |
+| Los Angeles | 441 → 2,957 | 1,332 → 4,723 | gaussian → power_law | gaussian → power_law |
+| Richmond, CA | 343 → 955 | 607 → 1,378 | power_law → gaussian | power_law → gaussian |
+
+- Both settings returned **MISMATCH** with unchanged match counts: framework information **0/4**,
+  AP2-reference information **1/4**, betweenness **2/4** in each comparison. Every betweenness
+  verdict remains exponential. No distribution verdict is inconclusive; Gaussian information
+  still yields an inconclusive network label under the existing mapping.
+- Los Angeles' new AP2-reference power-law tail contains **98/2,957 nodes** (`p_exp≈0.02443`,
+  alpha≈3.56065). Its full-body half-normal fit still wins over exponential (`delta_aic≈1023.54`),
+  but the classifier's qualifying-tail rule has priority. This is not a whole-distribution or
+  historical self-organisation claim. Framework tail: **854/2,957**, alpha≈5.32317.
+- Richmond's no-consolidation information candidate loses significantly to lognormal
+  (AP2-reference `p_ln≈0.00724`), so its power-law verdict is rejected; the body favours half-normal.
+  Cairo retains its AP2-reference power-law verdict, with tail **130/2,166**, density alpha≈3.49122,
+  ideal CCDF gamma≈2.49122. None of these changes establishes absolute goodness of fit.
+- Exact information times were **24.00 s**, **441.95 s**, **1,478.87 s**, **49.76 s**, respectively;
+  the complete zero-consolidation run took about **34 minutes**, using the same two workers and
+  1 GiB configured budget. Full information coverage: **6,804/6,804 nodes** across the four cities.
+- The fixed comparison shows sensitivity to consolidation but does **not** resolve the mismatch
+  or isolate the effects of street representation, approximate historical windows and fitting rules.
+
+Added [examples/inspect_ticket15_samples.py](examples/inspect_ticket15_samples.py), which works
+offline on these existing results. It checks run settings, input hashes, boundary hashes,
+classifier rules/thresholds, full information coverage and exported layer counts. It produces
+`results/ticket15-inspection/report.txt`, street/access/service CSVs, sample-boundary metadata,
+raw and cleaned maps, cluster metrics and a per-city QGIS GeoPackage. Opposite arcs are grouped
+as physical segments; mixed tags count once. Raw segment counts are not intersection counts.
+
+Verification: **49 passed, 3 skipped in 25.89 s**, including all 21 existing Ticket 15 cases,
+9 new inspection cases and existing cleaning/CLI tests. The integration test checks offline
+operation, output layers/maps, source byte preservation, output/source directory separation,
+and tampering refusal; scientific bookkeeping tests cover reciprocal/mixed road counting,
+missing tags, zero length, controlled configurations and cluster extents.
+On all four actual zero-consolidation GeoPackages, independently rebuilt minimum-parallel-edge
+undirected graphs and recomputed both baseline efficiencies and **three node isolations per city**
+using NetworkX all-pairs Dijkstra. Scores agree within **1e-10**; all non-loop geometry endpoints
+align within **1e-6 m**, CSV values agree, and all information scores are finite and covered.
+The detailed check record is `results/ticket15-inspection/numerical_verification.json`.
+Both runs use identical frozen GraphML hashes; boundary hashes were also verified. Primary
+analysis outputs were preserved. The diagnostic maps were visually inspected; documentation
+links and whitespace checks passed. Numerical correctness does not imply empirical agreement.
+
+Street/window findings:
+
+| City | Raw length in path/cycle categories | Raw length in service roads | Largest retained 15 m cluster | Cluster diameter | Maximum displacement across clusters |
+| --- | --- | --- | --- | --- | --- |
+| Ahmedabad | 1.12% | 5.47% | 22 junctions | 173.5 m | 89.3 m |
+| Cairo | 6.19% | 11.35% | 280 junctions | 668.7 m | 368.5 m |
+| Los Angeles | 57.82% | 14.27% | 77 junctions | 400.7 m | 211.2 m |
+| Richmond, CA | 17.49% | 21.21% | 47 junctions | 196.7 m | 132.5 m |
+
+- Path/cycle means footway, pedestrian, path, steps, cycleway and corridor. Categories are
+  descriptive, not access permissions. OSMnx's `all` filter does not exclude private ways:
+  explicitly private access accounts for 1.82%, 0.87%, 4.59%, 1.96% of raw length, respectively.
+  Most access tags are unspecified. These figures precede largest-component selection.
+- Los Angeles visibly includes many parallel path lines around its grid. Frozen GraphML does
+  not retain footway/sidewalk subtype tags, so this audit cannot fully distinguish independent
+  walking streets from sidewalk detail. AP2 includes pedestrian networks: excluding all walking
+  streets or switching blindly to a vehicle filter would not establish equivalent representation.
+- The 15 m parameter is an OSMnx **buffer radius**. Connected overlapping buffers merge
+  transitively, so cluster diameter/displacement can greatly exceed 15 m. Cairo's large spoke
+  pattern is a consequence of this consolidation, distinct from the already-corrected reverse
+  geometry bug. Rebuilding the baseline reproduced its saved junction positions within 1e-6 m.
+- The maps show irregular patterns in Ahmedabad/Cairo and grids in Los Angeles/Richmond;
+  all sample coordinates, UTM extents and 1609 m scales are exported. Historical windows
+  remain ungeoreferenced. AP2 Table 1 counts are supplied for context, not acceptance targets.
+- **Location review:** an initial concern from Jacobs' Virginia index was superseded by more
+  direct evidence: the same authors' [companion paper, §3.1/Figure 1](https://www.udsu-strath.com/wp-content/uploads/2010/06/PA2006_09.pdf)
+  explicitly labels Richmond, CA. Do not infer a wrong-city error from the index alone or replace
+  California with Virginia. Exact historical window matching still requires georeferencing.
+
+Manual inspection after generating the diagnostics:
+
+```sh
+python examples/inspect_ticket15_samples.py \
+  --comparison results/ticket15-no-consolidation --out results/ticket15-inspection
+
+PYTHONPATH= PYTEST_DISABLE_PLUGIN_AUTOLOAD=1 python -m pytest -q \
+  tests/test_crucitti.py tests/test_crucitti_inspection.py
+```
+
+Read the diagnostic report and CSV, then open `raw_windows.png`, `topology_comparison.png`
+and `centrality_comparison.png` (overlaid positive-score CCDFs; zeros excluded).
+In QGIS, open `results/ticket15-inspection/<city>.gpkg`: categorise `raw_edges` by `highway`,
+toggle `edges_15m` / `edges_0m` and their nodes, and label `clusters_15m` by `merged_junctions`
+or `max_displacement_m`. All layers include a square `boundary`; optionally add the OpenStreetMap
+XYZ basemap for geographic context. Do not join the two node layers by ID: consolidation changes
+junction identities and populations. Classifier agreement alone cannot select a valid window,
+filter or tolerance. Further location, filtering and fit diagnostics remain in
+[plan/TEST_RECOMMENDATIONS.md](plan/TEST_RECOMMENDATIONS.md#15--crucitti-comparison).

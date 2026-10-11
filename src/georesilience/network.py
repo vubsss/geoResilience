@@ -1,12 +1,13 @@
 """Source adapters and the auditable network cleaning pipeline."""
 
 import sys
+import math
 from datetime import datetime, timezone
 
 import geopandas as gpd
 import networkx as nx
 import osmnx as ox
-from shapely.geometry import box
+from shapely.geometry import LineString, box
 
 from .links import _link_rows
 
@@ -71,7 +72,30 @@ def _guard_dead_ends(before, after):
         )
 
 
-def load_and_clean(config):
+def _orient_arc_geometries(graph):
+    """Align each stored LineString with its arc, before endpoint reconnection.
+
+    MultiGraph.to_directed copies geometry unchanged to both directions. OSMnx
+    consolidation prepends/appends centroids assuming u->v geometry, so an
+    uncorrected reverse copy creates artificial backtracking and unequal lengths.
+    """
+    reversed_count = 0
+    for u, v, data in graph.edges(data=True):
+        geometry = data.get("geometry")
+        if geometry is None or u == v:
+            continue
+        coords = list(geometry.coords)
+        start = (graph.nodes[u]["x"], graph.nodes[u]["y"])
+        end = (graph.nodes[v]["x"], graph.nodes[v]["y"])
+        forward = math.dist(coords[0][:2], start) + math.dist(coords[-1][:2], end)
+        reverse = math.dist(coords[0][:2], end) + math.dist(coords[-1][:2], start)
+        if reverse < forward:
+            data["geometry"] = LineString(coords[::-1])
+            reversed_count += 1
+    return reversed_count
+
+
+def load_and_clean(config, *, undirected=False, enforce_dead_end_guard=True):
     # Extend, never replace: retain OSMnx defaults and make repeated runs idempotent.
     ox.settings.useful_tags_way = list(dict.fromkeys([*ox.settings.useful_tags_way, *EXTRA_WAY_TAGS]))
     source = config.input.source
@@ -123,6 +147,11 @@ def load_and_clean(config):
         applied = "custom_filter" if config.network.custom_filter is not None else config.network.type
     if graph.number_of_edges() == 0:
         raise ValueError("input: network has no road edges")
+    if undirected:
+        # Validation against AP2 ignores one-way restrictions before simplification
+        # and component selection, not merely when computing centralities.
+        graph = ox.convert.to_undirected(graph).to_directed()
+        reversed_geometries = _orient_arc_geometries(graph)
     cleaning = {"raw": _counts(graph)}
     if source == "osm_xml":
         if config.network.type == "drive":
@@ -152,15 +181,22 @@ def load_and_clean(config):
             graph, tolerance=config.cleaning.tolerance_m, rebuild_graph=True,
             dead_ends=True, reconnect_edges=True,
         )
-        _guard_dead_ends(before, _dead_ends(graph))
+        if enforce_dead_end_guard:
+            _guard_dead_ends(before, _dead_ends(graph))
+        else:
+            try:
+                _guard_dead_ends(before, _dead_ends(graph))
+            except ValueError as exc:
+                warnings.append(str(exc))
     cleaning["consolidated"] = _counts(graph)
     cleaning["consolidation_enabled"] = config.cleaning.consolidate
     cleaning["dead_ends"] = {"before": before, "after": _dead_ends(graph)}
     if not graph:
         raise ValueError("cleaning: consolidation left an empty graph")
-    _log("Keeping largest strongly connected component")
-    component_count = nx.number_strongly_connected_components(graph)
-    graph = ox.truncate.largest_component(graph, strongly=True)
+    _log("Keeping largest connected component" if undirected else "Keeping largest strongly connected component")
+    component_count = (nx.number_weakly_connected_components(graph) if undirected
+                       else nx.number_strongly_connected_components(graph))
+    graph = ox.truncate.largest_component(graph, strongly=not undirected)
     if graph.number_of_edges() == 0:
         raise ValueError("cleaning: largest strongly connected component has no road edges")
     cleaning["final"] = _counts(graph)
@@ -176,6 +212,10 @@ def load_and_clean(config):
         warnings.append("check boundary clipping / one-way slivers")
     warnings.append(BOUNDARY_WARNING)
     cleaning["warnings"] = warnings
+    if undirected:
+        cleaning["direction_handling"] = "one-way restrictions ignored before simplification; largest connected component"
+        cleaning["dead_end_guard_enforced"] = enforce_dead_end_guard
+        cleaning["arc_geometries_reoriented"] = reversed_geometries
     for warning in warnings:
         _log(f"WARNING: {warning}")
     return graph, {

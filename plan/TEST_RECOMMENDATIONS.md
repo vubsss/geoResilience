@@ -219,15 +219,57 @@ these are implementation-stage results, not new runs for this update. See
 - [ ] Review maps and long-name/non-ASCII inputs manually as well as checking report order/width;
   verify coordinates, legends, scale bars and labels convey the computed quantity correctly.
 
-## 15 — Crucitti comparison (prospective)
+## 15 — Crucitti comparison
 
-- [ ] Freeze city inputs, document provenance and settings, then run the predefined comparison
+- [x] Freeze city inputs, document provenance and settings, then run the predefined comparison
   without retuning thresholds or centres to obtain agreement. Preserve mismatches and abstentions.
-- [ ] Examine modest predefined shifts of sample windows and consolidation settings separately
-  from the primary experiment, to assess sensitivity to approximate historical sample locations.
-- [ ] Verify complete information-centrality coverage, the two separate match-count conditions
-  and report logic. Treat modern-data qualitative agreement as limited evidence, not historical
-  numerical replication or proof of a universal city classification.
+  The four-city run on 11 October 2026 returned MISMATCH under both conventions; detailed
+  results and substantial fixed-15-m consolidation warnings are recorded in TICKET_UPDATES.
+- [x] Run the predefined 15 m versus zero-consolidation comparison on the identical frozen
+  inputs, preserving centres, network filter, resources and fitting rules. All four cities
+  completed with full information coverage. Match counts stayed unchanged (both MISMATCH),
+  while Los Angeles/Richmond information verdicts changed. Independently verify both baseline
+  efficiencies and three node removals per city on exported graphs using NetworkX Dijkstra.
+- [x] Inspect the frozen sample windows and included highway/access/service tags, with maps,
+  physical-length shares and QGIS layers. Audit merge-cluster sizes/displacements: buffer overlap
+  is transitive, so a 15 m tolerance does not cap cluster diameter. Offline inspection checks
+  preserve source files and reject mismatched settings/hashes and tampered inputs.
+- [ ] Examine modest predefined shifts of sample windows separately from the primary experiment,
+  to assess sensitivity to approximate historical sample locations. Georeference the original
+  windows first. The companion paper explicitly labels Richmond, CA, despite an initial concern
+  from Jacobs' Virginia index: do not replace the city on that evidence alone or conflate a
+  window change with a consolidation sensitivity experiment.
+- [ ] Predefine a street-centreline representation/filter and compare it separately on frozen
+  inputs. Distinguish independent pedestrian streets from parallel sidewalks, crossings, parking
+  aisles and private-access ways; a motor-vehicle-only filter is not automatically AP2's scope.
+  New snapshots should retain footway/sidewalk subtype and mode-access tags, which the current
+  GraphML lacks. Do not choose filters by their classification match count.
+- [ ] Define spatial/topological quality checks for consolidation before classification, including
+  cluster diameter, maximum junction displacement, unusually high degree and preservation of
+  distinct crossings. Compare bounded or smaller junction merges against these checks; a buffer
+  radius alone does not constrain transitive cluster extent. Keep this separate from filtering
+  and window shifts, and preserve the original 15 m baseline.
+- [x] Verify complete information-centrality coverage, the two separate match-count conditions
+  and report logic using offline integration and mocked verdicts. Hand-check AP2 spatial efficiency
+  and compare both information conventions against independent NetworkX recomputation, including
+  disconnections, fixed N, metric scaling, worker/chunk changes and one-way component handling.
+- [x] Check positive-body exponential versus AP2 Gaussian-shaped CCDF (Rayleigh) fits against
+  closed-form likelihoods, separately from Ticket 07's half-normal model. Check input hashes,
+  offline reuse, QGIS/CSV/JSON/report outputs, overwrite cleanup and absence of stale aggregate
+  results after an interrupted analysis. All-city live findings are documented in TICKET_UPDATES.
+- [x] Check geometry orientation through undirected conversion and consolidation, not only
+  shortest-path arithmetic on the processed graph. Regression fixtures verify endpoint alignment,
+  paired road records and a hand-computed 310 m total after a junction merge. Audit all four
+  real outputs for aligned non-loop endpoints and reciprocal physical links. The geometry bug
+  found during mismatch review was corrected and the original experiment rerun without retuning.
+- [ ] Add small-sample/bootstrap goodness-of-fit diagnostics and tail-threshold sensitivity for
+  observed city distributions. Existing likelihood/AIC evidence compares alternatives; it does
+  not establish an absolute model fit. Keep density and CCDF exponents distinct.
+- [ ] If original Jacobs/AP2 map windows become available, digitise and validate their topology
+  separately from modern OSM. Assess effects of the all-network filter, component removal,
+  boundary treatment and consolidation before attributing a mismatch to a city-development class.
+  Treat modern-data qualitative agreement as limited evidence, not historical numerical
+  replication or proof of a universal city classification.
 
 ## 16 — Ada runbook (prospective)
 
