@@ -1,9 +1,9 @@
 # GeoResilience
 
-GeoResilience analyzes road network structure and resilience. Tickets 01–08 provide input,
+GeoResilience analyzes road network structure and resilience. Tickets 01–09 provide input,
 cleaning, physical road links, exact centralities, redundancy screening, single-road damage,
 information centrality, cumulative attack/failure experiments, distribution classification,
-per-event road failure probabilities, and auditable outputs. Later analysis tickets are
+per-event road failure probabilities, Monte Carlo connectivity reliability, and auditable outputs. Later analysis tickets are
 tracked in [TICKET_UPDATES.md](TICKET_UPDATES.md).
 
 Install with Python 3.10 or newer:
@@ -95,6 +95,10 @@ reliability:
   p_fail_csv: null
   p0: 0.01
   p0_sweep: [0.001, 0.01, 0.05]
+  samples: 10000
+  od_pairs_csv: null
+  min_down_count: 30
+  min_up_count: 30
 output:
   dir: results/
   figures: true
@@ -921,7 +925,8 @@ source and are excluded from templates and coverage. Tiny probabilities are comp
 
 The primary `p0` supplies exported probabilities. The sweep is sorted, deduplicated and always
 includes that primary value; every entry must be finite and in `[0,1]`. No failure simulations
-are performed by this stage. Tickets 09/10 will consume these probabilities; Ticket 06's existing
+are performed by this assignment stage. Ticket 09 consumes these probabilities for connectivity;
+Ticket 10 will use them for travel-time reliability. Ticket 06's existing
 fraction-based removal experiments retain their own definition.
 `probabilities_at_p0(links, user_probabilities, p0)` returns probabilities keyed by non-self-loop
 `link_id`, so later stages can reuse the inputs for each sweep without reloading the CSV.
@@ -984,8 +989,8 @@ fully supplied control shows 100% user coverage.
 
 **Primary p0 and sweep:** `p0 = 0.01` assigns the proxy a 1% per-event closure probability for
 a 1 km link. A 2 km proxy link gets `1 - 0.99^2 = 0.0199`, or **1.99%**. Exported probabilities
-use this primary value. The sweep lists alternative assumptions for later reliability analysis;
-Ticket 08 does not report connectivity estimates for those alternatives.
+use this primary value. The sweep lists alternative probability assumptions. The Ticket 08
+section describes their assignment; the Ticket 09 section now reports their connectivity estimates.
 
 **CSV warnings:** the mixed demo deliberately contains 290 blank probability rows and one
 unmatched way ID: **291 warnings, 20 shown and 271 omitted**. Blank values use the proxy, and
@@ -1012,7 +1017,7 @@ probabilities and the proxy are not calibrated against observed road closures.
 
 Earlier centrality and Ticket 06 robustness sections are expected to agree across these three
 scenarios because they analyze the same graph and retain the same settings. Ticket 08 assigns
-probabilities; Ticket 09 will use them to estimate connectivity reliability.
+probabilities; Ticket 09 uses them to estimate connectivity reliability.
 
 ### Manual examples
 
@@ -1059,3 +1064,184 @@ All four scenarios disable consolidation and figures. They keep earlier candidat
 work small because this ticket tests probability assignment. Generated inputs/configs/reference
 CSVs are ignored by Git; the generator and tests are tracked. Use `--nodes` and `--seed` on the
 generator to choose a different spatial case.
+
+## Connectivity reliability (Ticket 09)
+
+Each analysis run now samples independent physical-road closures using Ticket 08 probabilities.
+All directed edges of a failed physical link disappear together; parallel roads remain separate
+failure units. Self-loops are excluded. This analysis always respects road direction, independently
+of the centrality and removal direction settings. It operates on the **cleaned network**, whose
+baseline is the retained largest strongly connected component.
+
+This is an **AP3-inspired connectivity analysis**, not a replication of AP3's main experiment.
+[AP3](papers/AP3-vulnerability_analysis.pdf), printed page 269, discusses connectivity reliability
+as surviving paths; its principal method on pages 270–274 concerns accessibility losses.
+Independent closures, the SCC score, node membership, conditional importance and these Monte Carlo
+intervals are framework choices. Spatially correlated hazards and correlations between physical
+roads sharing an OSM way are outside this model. Synthetic probabilities validate calculations,
+not real-world road risks. The approved corrections to the original ticket are listed in
+[TICKET_UPDATES.md](TICKET_UPDATES.md#current-ticket-09--connectivity-reliability).
+
+### Configure sampling and OD pairs
+
+```yaml
+reliability:
+  p_fail_csv: data/road-probabilities.csv  # optional; otherwise use the length proxy
+  p0: 0.01
+  p0_sweep: [0.001, 0.01, 0.05]
+  samples: 10000
+  od_pairs_csv: data/od-pairs.csv          # optional
+  min_down_count: 30
+  min_up_count: 30
+```
+
+`samples` must be at least two. Both count thresholds default to 30 and must be at least two
+to support sample-variance estimation. Higher sample counts reduce Monte Carlo uncertainty and
+make rare closures more likely to meet the importance threshold. Existing configs receive these
+defaults, so earlier example runs also produce connectivity results now.
+
+An OD file uses WGS84 **longitude before latitude**, with a unique nonempty label per row:
+
+```csv
+label,origin_lon,origin_lat,dest_lon,dest_lat
+hospital,81.000,17.180,81.010,17.185
+```
+
+Endpoints snap to the nearest cleaned node in projected metres. Snap distances over 500 m produce
+warnings, capped at 20 displayed messages with total/omitted counts. Tied nearest nodes use the
+smallest node ID. Invalid labels or coordinates stop the run before centrality computation.
+An origin and destination snapped to the same node are reachable with probability one.
+
+### How to read the Connectivity reliability report
+
+The report measures three different properties:
+
+| Output | Meaning | What it does not establish |
+| --- | --- | --- |
+| `conn_reliability` | Expected fraction of distinct node pairs mutually reachable in each sampled graph | Share of actual journeys served; one-way reachability |
+| `p_connected` | Probability a node belongs to the selected largest SCC | Probability of reaching a hospital or any other specified destination |
+| OD `p_od` | Probability the named destination is reachable from its origin, following direction | Travel time or acceptable journey duration |
+
+For each sample, an SCC is a strongly connected component: every node can reach every other node
+in that component. With `N` nodes, the network score is:
+
+```text
+sum(component_size * (component_size - 1)) / (N * (N - 1))
+```
+
+The score excludes self-pairs, lies between zero and one and counts every distinct ordered pair
+equally. The run reports its sample mean and approximate normal 95% confidence interval. Uniform
+potential node pairs are not observed travel demand. The library also accepts nonnegative node
+weights and uses products of those weights for pairs; the CLI currently uses uniform weights.
+With no positive-weight distinct pairs, the network score and its interval are null, rather than
+inventing a value for an undefined denominator.
+
+The **p0 sweep** changes only the length-proxy assumptions. Supplied probabilities stay fixed.
+The table reports the network score and interval at each p0; its change sentence uses percentage
+points. Node, link and OD results use the primary p0. All sweep values use the same random uniforms,
+which reduces comparison noise and ensures sampled mutual connectivity cannot increase as p0
+increases. Fully supplied networks consequently have a flat sweep.
+
+The **node section** reports mean membership, the tenth percentile across nodes, the maximum
+Wilson interval half-width and the 20 lowest membership values. Largest SCC means largest **node
+count**. Ties select the component with the smallest minimum node ID; numeric IDs sort numerically.
+A singleton can be selected. For two nodes `0` and `1` joined by one two-way road with closure
+probability 0.5, the exact answers are network **0.5**, membership **1.0 for node 0** and **0.5 for
+node 1**. Their average is **0.75**; both nodes do not individually have membership 0.75 under
+this deterministic rule. This corrects the original ticket's acceptance example.
+
+**Link importance** is `mean(network score | road up) - mean(network score | road down)`.
+An importance of 0.2 means a 20 percentage point conditional difference in mutual connectivity.
+Under the independent-failure model this is a Birnbaum-style sensitivity, rather than the road's
+closure probability or an estimate of annual loss. The report lists the top 20 available estimates
+with Welch t 95% intervals and counts. All edges store `rel_up_count`, `rel_down_count` and status.
+There must be enough observations **in both states**; never-failing, always-failing and rarely
+observed states can leave the importance and interval null. Check `rel_importance_status` for
+`insufficient_down`, `insufficient_up`, `self_loop` or `undefined_pair_universe`. An unavailable
+importance is not zero. Small negative estimates can arise from sampling noise; inspect the CI.
+
+**OD results** use actual directed reachability, with Wilson 95% intervals. A surviving road from
+A to B can give OD A→B = 1 while B→A = 0 and mutual network score = 0. Forward/reverse OD rows
+on the bidirectional spatial demos match because each road's two directions fail together.
+
+Every CI describes **Monte Carlo sampling uncertainty conditional on the assumed probabilities**.
+It excludes uncertainty in the length proxy, hazard calibration and independence assumptions.
+Normal/Welch intervals are approximate; a constant observed network score can yield a zero-width
+interval despite an unobserved rare disconnection. Whole-network-connected probability is outside
+this metric's scope; it is not universally near zero. None of these results measures accessibility
+loss or travel-time reliability, which belong to later tickets.
+
+### Outputs and reproducibility
+
+- `network.gpkg`, nodes: `p_connected`, `p_connected_ci_low`, `p_connected_ci_high`.
+- `network.gpkg`, edges: existing `p_fail`/source, plus `rel_importance`, its `_ci_low`/`_ci_high`,
+  `rel_up_count`, `rel_down_count`, `rel_importance_status`.
+- `od_reliability.csv` when nonempty OD pairs are supplied: input coordinates, snapped node IDs,
+  snap distances in metres, `p_od`, `ci_low`, `ci_high`.
+- `summary.json.reliability`: preserves Ticket 08 coverage/warnings and adds network CI, sweep,
+  node/link summaries, OD rows, sampling settings and metric definitions.
+- `figures/connectivity_nodes_map.png` when figures are enabled, colored by main-SCC membership.
+
+Seeded batches contain 256 samples each, with child seeds assigned by batch index and accumulated
+in that order. Numerical connectivity estimates, intervals, counts and rankings are identical
+for the same inputs/seed with one or four workers; runtimes and worker metadata can differ.
+Increasing samples preserves the existing sample prefix. Identical probability vectors share
+their network calculation. Tiny jobs use one worker to avoid process startup costs. Memory limits
+reduce the worker count or reject an insufficient working-array budget; the estimate excludes
+Python interpreter/process overhead. No all-pairs distance matrix or full failure-state history
+is retained. Overwrite removes stale OD CSVs and the new map when they are no longer requested.
+
+### Run and manually verify Ticket 09
+
+From the repository root, with your environment activated:
+
+```sh
+python examples/create_ticket09_demo.py
+georesilience run --config data/ticket09-demo/half.yaml --overwrite
+georesilience run --config data/ticket09-demo/directed.yaml --overwrite
+georesilience run --config data/ticket09-demo/bridge.yaml --overwrite
+georesilience run --config data/ticket09-demo/spatial-proxy.yaml --overwrite
+georesilience run --config data/ticket09-demo/spatial-user.yaml --overwrite
+georesilience run --config data/ticket09-demo/spatial-mixed.yaml --overwrite
+PYTHONPATH= PYTEST_DISABLE_PLUGIN_AUTOLOAD=1 python -m pytest -q tests/test_connectivity.py
+```
+
+Defaults use seed 42 and 10,000 samples. The spatial input has **200 nodes / 1,046 physical links**;
+all three spatial scenarios use that same input with proxy-only, full-user and mixed coverage.
+The generator accepts `--nodes`, `--seed`, `--samples`, `--out`. Generated data are gitignored;
+the generator and tests are tracked. Figures are enabled for the three small cases and spatial
+mixed; earlier analysis settings are kept small to focus this experiment on connectivity.
+
+1. Open `results/ticket09-half/report.txt`, at **Connectivity reliability**. Expect network near
+   0.5, its 95% CI containing 0.5 for the default seed, node 0 membership exactly 1, node 1 near
+   0.5, and link importance exactly 1. Both OD directions match the network estimate. Compare
+   the exact values in `data/ticket09-demo/half-expected.json`.
+2. In `results/ticket09-directed/od_reliability.csv`, forward is exactly 1 and reverse near 0.5.
+   The network is near 0.5. The always-up forward road has unavailable importance, status
+   `insufficient_down`. Its p0 sweep is flat because every road has a supplied probability.
+3. The bridge case joins two triangles with one road. Compare its network, memberships, OD values
+   and link importances with `bridge-expected.json`, computed independently by enumerating all
+   **128** failure states. Monte Carlo values should be close; individual 95% intervals are not
+   guaranteed to cover every exact answer simultaneously. Match links by `name` or `link_id`.
+4. Compare the spatial reports. Proxy/mixed network reliability should decrease or stay constant
+   with increasing p0; fully supplied results stay flat. Most redundant roads can have importance
+   near zero. Do not require an arbitrary ranking between the three coverage scenarios.
+5. In QGIS open the corresponding `data/ticket09-demo/*-input.gpkg` and output `network.gpkg`.
+   Check node membership/CI fields and link probabilities, counts and statuses. Every non-loop
+   road has `rel_up_count + rel_down_count = 10000`. The supplied spatial case deliberately has
+   probability-zero and probability-one controls; their importance must be unavailable.
+   Geometric crossings connect only where the input graph has shared nodes.
+6. To test reproducibility, copy a YAML, set `analysis.n_jobs` to 1 and then 4, and write to two
+   output folders. Compare connectivity estimates and exported numerical fields. To test OD
+   snapping, move an endpoint far from the graph and check its snap-distance warning.
+
+Small exact references establish calculation correctness. The larger spatial cases check
+coverage, redundancy, probability extremes and reproducibility; they do not provide ground-truth
+hazard predictions. Automated tests additionally enumerate directed/parallel/weighted states and
+check 99% network CI coverage over 100 fixed seeds, without tuning the probabilities or seeds.
+
+The default runs produced network estimates **0.4918** (half), **0.4980** (directed) and **0.81428**
+(bridge, exact **0.81532443625**). Each exact value is inside its reported 95% CI. Spatial primary
+estimates were **1.0 proxy**, **0.999848 user** and **1.0 mixed**: this redundant graph rarely
+disconnects under these probabilities. The observed 1.0 values do not establish zero failure risk.
+Detailed counts and findings are in [TICKET_UPDATES.md](TICKET_UPDATES.md#verified-default-example-findings).

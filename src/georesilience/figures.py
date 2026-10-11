@@ -7,7 +7,8 @@ from .classification import CLASSIFICATION_FIGURES
 NODE_MEASURES = ("closeness", "straightness", "betweenness")
 FIGURE_FILENAMES = ("degree_hist.png", *(f"{name}_ccdf.png" for name in NODE_MEASURES),
                     "edge_betweenness_map.png", "redundancy_map.png", "critical_links_map.png",
-                    "robustness_scc.png", "robustness_efficiency.png", *CLASSIFICATION_FIGURES)
+                    "robustness_scc.png", "robustness_efficiency.png", "connectivity_nodes_map.png",
+                    *CLASSIFICATION_FIGURES)
 
 
 def _critical_map_canvas(links):
@@ -126,3 +127,17 @@ def write_robustness_figures(result, folder):
         fig.tight_layout()
         fig.savefig(folder / filename, bbox_inches="tight", dpi=180)
         plt.close(fig)
+
+
+def write_connectivity_figure(nodes, links, folder):
+    import matplotlib.pyplot as plt
+
+    folder.mkdir(exist_ok=True)
+    fig, ax = _critical_map_canvas(links)
+    links.plot(ax=ax, color="lightgrey", linewidth=0.6)
+    nodes.plot(ax=ax, column="p_connected", cmap="viridis", vmin=0, vmax=1, markersize=18,
+               legend=True, legend_kwds={"label": "P(node in main SCC)", "shrink": .65})
+    ax.set_title("Main-component membership probability")
+    ax.set_axis_off()
+    fig.savefig(folder / "connectivity_nodes_map.png", bbox_inches="tight", dpi=180)
+    plt.close(fig)

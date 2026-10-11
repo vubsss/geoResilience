@@ -83,6 +83,10 @@ class ReliabilityConfig(StrictModel):
     p0: float = Field(default=0.01, ge=0, le=1, allow_inf_nan=False)
     p0_sweep: list[Annotated[float, Field(ge=0, le=1, allow_inf_nan=False)]] = Field(
         default_factory=lambda: [0.001, 0.01, 0.05])
+    samples: int = Field(default=10000, ge=2)
+    od_pairs_csv: Path | None = None
+    min_down_count: int = Field(default=30, ge=2)
+    min_up_count: int = Field(default=30, ge=2)
 
     @model_validator(mode="after")
     def include_primary(self):

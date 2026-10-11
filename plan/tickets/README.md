@@ -4,6 +4,10 @@ Source of truth: `../DESIGN.md`. Each ticket is a vertical slice: when it is don
 
 Work the **frontier**: pick any ticket whose blockers are all done.
 
+Further validation ideas for all tickets are in
+[Additional testing recommendations](../TEST_RECOMMENDATIONS.md). Completion status and results
+from tests actually run are tracked in [TICKET_UPDATES.md](../../TICKET_UPDATES.md).
+
 ## Dependency graph
 
 ```

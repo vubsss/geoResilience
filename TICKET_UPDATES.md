@@ -8,7 +8,7 @@
 - [x] **06 — Attack vs failure curves** — completed, tested and manually verified by you, including ER and scale-free examples.
 - [x] **07 — Distribution classification** — completed, tested and manually verified by you, including five ER + five scale-free cases; inconclusive-label interpretation documented.
 - [x] **08 — Failure probabilities** — completed, tested and manually verified by you, including exact answers and three spatial scenarios; report interpretation documented.
-- [ ] **09 — Connectivity reliability** — not started.
+- [x] **09 — Connectivity reliability** — completed for now at your request; implementation and tests verified. Includes three exact-answer fixtures and three 200-node spatial scenarios; AP3 scope corrections and further testing recommendations documented.
 - [ ] **10 — Travel-time reliability** — not started.
 - [ ] **11 — Hansen accessibility (uniform masses)** — not started.
 - [ ] **12 — WorldPop population** — not started.
@@ -16,6 +16,10 @@
 - [ ] **14 — Scorecard and final report** — not started.
 - [ ] **15 — Crucitti replication** — not started.
 - [ ] **16 — Ada runbook** — not started.
+
+Additional validation ideas for every ticket are tracked separately in
+[plan/TEST_RECOMMENDATIONS.md](plan/TEST_RECOMMENDATIONS.md). They are follow-up recommendations,
+not completed experiments or blockers to the completion recorded here.
 
 ## Ticket 01 manual run
 
@@ -123,7 +127,7 @@ georesilience run --config results/ticket02-graphml/run_config.yaml --out result
 
 Ticket **03** was implemented on **10 October 2026** and is **completed and manually verified
 by you**, as confirmed on **10 October 2026**.
-Tickets 09–16 have not been started. Tickets 04–08 are documented below.
+Tickets 04–09 are documented below; tickets 10–16 have not been started.
 
 ### Changes
 
@@ -359,7 +363,7 @@ is preserved. All roads are 100 m except the 150 m backup road in the parallel e
 
 Ticket **05** was implemented on **10 October 2026** and is **completed, tested and manually verified
 by you**, as confirmed on **10 October 2026**. Tickets 02, 03 and 04 remain completed and manually verified.
-Tickets 06–08 are documented below; tickets 09–16 have not been started.
+Tickets 06–09 are documented below; tickets 10–16 have not been started.
 
 ### Changes
 
@@ -509,7 +513,7 @@ All nodes and roads are selected; `all: true` still leaves analytic bridges in t
 Ticket **06** was implemented on **10 October 2026** and is **completed, tested and manually
 verified by you**, as confirmed on **10 October 2026**, including the ER and scale-free examples.
 Your confirmation of Ticket 05's results has been recorded above.
-Tickets 07–08 are documented below; tickets 09–16 have not been started.
+Tickets 07–09 are documented below; tickets 10–16 have not been started.
 
 ### Changes
 
@@ -684,7 +688,7 @@ strategy and metric; these finite examples do not establish universal model supe
 Ticket **07** was implemented on **10 October 2026** and is **completed and manually verified
 by you**, as confirmed on **11 October 2026**. Verification includes the requested
 **five ER + five scale-free graph benchmark** and review of its inconclusive labels.
-Ticket 08 is documented below; tickets 09–16 have not been started.
+Tickets 08–09 are documented below; tickets 10–16 have not been started.
 
 ### Changes
 
@@ -922,11 +926,11 @@ these observed limitations.
   the generated outputs and the inconclusive-label explanation on **11 October 2026**.
   Ticket 07 is complete; Ticket 08 is documented below.
 
-## Current ticket: 08 — Failure probabilities
+## Ticket 08 — Failure probabilities
 
 Ticket **08** was implemented on **11 October 2026** and is **completed and manually verified
 by you**, as confirmed on **11 October 2026**. Verification covers the ticket's exact-answer and
-spatial examples. Tickets 09–16 have not been started.
+spatial examples. Ticket 09 is documented below; tickets 10–16 have not been started.
 
 ### Changes
 
@@ -981,7 +985,7 @@ and empty lines. Blank values are missing; zero is supplied. Unknown rows are st
 and an unknown blank row contributes both an unmatched-ID and blank-value warning.
 
 This stage assigns probabilities; it does not draw closures or estimate connectivity. Ticket 06
-removal experiments retain their existing fraction-based behavior. Tickets 09/10 can reuse
+removal experiments retain their existing fraction-based behavior. Ticket 09 uses and Ticket 10 can reuse
 `probabilities_at_p0(links, user_probabilities, p0)` for each sweep value. Synthetic probabilities
 test implementation correctness, not real-world hazard calibration.
 
@@ -1069,12 +1073,12 @@ results and their interpretation. The README now includes
   shows the mixed example's counts, kilometres and percentage arithmetic.
 - Derives effective coverage **31.41% user / 68.59% proxy** from the mixed-link shares and
   explains why this produces the **68.6% proxy-length warning**.
-- Explains the primary p0, future sweep use, supplied zero versus blank values and the demo's
+- Explains the primary p0, sweep use, supplied zero versus blank values and the demo's
   **291 CSV warnings (20 shown / 271 omitted)**.
 - Gives three spatial-road calculations for manual checking in QGIS, reference-CSV comparisons
   by road name and the distinction between calculation correctness and hazard calibration.
 - Explains why earlier centrality and Ticket 06 robustness sections agree across the three
-  spatial scenarios; Ticket 09 will consume the probabilities for connectivity estimates.
+  spatial scenarios; Ticket 09 consumes the probabilities for connectivity estimates.
 
 ### Verification results
 
@@ -1095,4 +1099,171 @@ results and their interpretation. The README now includes
 - `git diff --check` passed. Verification used Python **3.13.3** and the existing temporary
   environment. All four default CLI examples and the template export completed successfully.
 - You confirmed manual verification on **11 October 2026**. Ticket 08 is complete;
-  Ticket 09 has not been started.
+  Ticket 09 is documented below.
+
+## Current ticket: 09 — Connectivity reliability
+
+Ticket **09** was implemented on **11 October 2026** and is **completed for now at your request**,
+as confirmed on **11 October 2026**. Additional validation remains separate follow-up work in
+[plan/TEST_RECOMMENDATIONS.md](plan/TEST_RECOMMENDATIONS.md#09--connectivity-reliability-priority-follow-up).
+Tickets 01–08 retain their completed status. Tickets 10–16 have not been started.
+
+### Changes
+
+- Added `src/georesilience/connectivity.py`: independent physical-road closure sampling, binary
+  directed CSR topology, strong components, mutual-pair scores, deterministic main-SCC membership,
+  conditional link importance and directed OD reachability. Parallel roads supply separate arcs;
+  both directions of one physical road close together. Self-loops are excluded.
+- Added `reliability.samples` (default 10,000), `od_pairs_csv`, `min_down_count` (30) and
+  `min_up_count` (30). Existing configs receive these defaults and now run the connectivity stage.
+  Sampling is independent of the direction switches for centrality/removal analyses.
+- Added reusable comment-aware OD CSV validation and projected KD-tree snapping, with deterministic
+  nearest-node ties, finite WGS84 validation and >500 m warnings. CSV errors fail before expensive
+  analysis. Directed BFS is shared by OD rows with a common origin; same-SCC pairs need no BFS.
+- Added normal 95% network intervals, Wilson node/OD intervals and Welch t link-importance
+  intervals. Unavailable estimates are JSON null / empty GeoPackage numeric values with explicit
+  status. Up/down counts remain available. The library supports optional nonnegative node weights;
+  CLI analyses use uniform weights. A zero distinct-pair denominator remains undefined.
+- Added reproducible 256-sample seeded batches, ordered parallel accumulation, common random
+  uniforms across p0 values and reuse of identical probability vectors. Workers are limited by
+  workload and the working-array memory budget. Summaries retain seeds/batch details and runtime
+  metadata. No full failure history or all-pairs distance matrix is retained.
+- Integrated node/link fields into `network.gpkg`, root `summary.json.reliability` while preserving
+  Ticket 08 coverage/warnings, the new report section, `od_reliability.csv` and
+  `figures/connectivity_nodes_map.png`. Overwrite removes stale OD CSVs and the map.
+- Added `examples/create_ticket09_demo.py`: three small exact-answer cases and three scenarios on
+  the same seeded 200-node spatial graph. Includes input GeoPackages, GraphMLs, probability
+  templates/CSVs, OD CSVs, YAMLs, a manifest and independent exact-reference JSONs. Generated data
+  are ignored by Git; the generator and tests are tracked.
+- Added `tests/test_connectivity.py` and README instructions explaining definitions, report fields,
+  assumptions, confidence intervals, example results and manual checks.
+
+### Approved deviations from the original plan and AP3 alignment
+
+The original [Ticket 09](plan/tickets/09-connectivity-reliability.md) is retained as the planning
+baseline. The following changes implement the recommendation you approved after the AP3 review:
+
+1. **Scientific attribution:** this is an **AP3-inspired connectivity analysis**, not a direct
+   implementation of AP3's main method. [AP3](papers/AP3-vulnerability_analysis.pdf), printed page
+   269, describes surviving-path connectivity reliability; its principal analysis on pages 270–274
+   concerns accessibility-loss vulnerability. The SCC score, membership, importance and sampling
+   design are project choices. Later accessibility work is closer to AP3's central contribution.
+2. **Network meaning:** the SCC formula counts **mutually reachable distinct node pairs**, not
+   every possible directed trip or the share of actual trips served. The formula is preserved;
+   its interpretation is corrected. True one-way reachability is assessed separately for OD pairs.
+   Uniform node-pair weights do not introduce observed demand data.
+3. **Node meaning and corrected acceptance example:** `p_connected` retains its planned field
+   name but is explicitly labeled **main-SCC membership**. A selected singleton counts. With two
+   nodes, one two-way road and closure probability 0.5, deterministic minimum-ID ties give
+   memberships **1.0 and 0.5**, with average **0.75**. The original claim of 0.75 per node conflicts
+   with that tie rule. Tests use the corrected per-node expectations; network reliability stays 0.5.
+4. **Importance guard in both states:** added `min_up_count`, `rel_up_count` and status fields.
+   Always-failing roads have no up observations, just as never-failing roads have no down
+   observations. Neither permits a conditional difference. Both thresholds and samples require
+   at least two observations for variance estimation; defaults remain 30 and 10,000 respectively.
+5. **Complete interval outputs:** added individual node interval fields and Welch importance
+   interval fields to fulfill the ticket's broad promise of CIs for all reported estimates.
+   The original detailed output list only named network/OD intervals and maximum node half-width.
+   Negative importance estimates are retained as sampling noise rather than silently clamped.
+6. **Failure assumptions and CI limits:** independent physical-link failures are an explicit
+   baseline assumption, including roads sharing an OSM way. This does not model common hazards.
+   CIs quantify Monte Carlo uncertainty conditional on supplied/proxy probabilities, excluding
+   calibration/model uncertainty. Normal/Welch approximations can miss rare events when every
+   observed score is equal. These limits are stated in the README and generated report.
+7. **Whole-network connectivity:** the planned output omission is preserved, but the explanation
+   is metric scope. We do not claim whole-network-connected probability is universally near zero
+   at city scale; topology, size and failure probabilities determine it.
+8. **Sweep efficiency:** common uniforms across p0 values make comparisons less noisy and sampled
+   mutual connectivity monotone. Identical probability vectors share computation, so fully supplied
+   networks have flat sweeps without redundant sampling. Only the primary produces node/link/OD
+   outputs, as planned. The memory estimate covers working arrays, not total process memory.
+
+### Run and manually verify
+
+Run from the repository root with your environment activated. The existing verification
+environment is `/tmp/georesilience-ticket02-venv` if still available.
+
+```sh
+python examples/create_ticket09_demo.py
+georesilience run --config data/ticket09-demo/half.yaml --overwrite
+georesilience run --config data/ticket09-demo/directed.yaml --overwrite
+georesilience run --config data/ticket09-demo/bridge.yaml --overwrite
+georesilience run --config data/ticket09-demo/spatial-proxy.yaml --overwrite
+georesilience run --config data/ticket09-demo/spatial-user.yaml --overwrite
+georesilience run --config data/ticket09-demo/spatial-mixed.yaml --overwrite
+PYTHONPATH= PYTEST_DISABLE_PLUGIN_AUTOLOAD=1 python -m pytest -q tests/test_connectivity.py
+```
+
+Inspect **Connectivity reliability** near the end of each `results/ticket09-*/report.txt`.
+
+- **Half:** network near 0.5 with its default-seed CI containing 0.5; memberships 1 and near 0.5;
+  importance exactly 1; OD probabilities equal the network score. Compare `half-expected.json`.
+- **Directed:** OD forward exactly 1, reverse near 0.5; mutual score near 0.5. The always-up road
+  has null importance with `insufficient_down`. Fully supplied probabilities give a flat sweep.
+- **Bridge:** compare against `bridge-expected.json`, which independently enumerates all 128
+  failure states. The bridge should dominate conditional importance. Match roads by `name` or
+  `link_id`; estimates should be close, with individual rather than simultaneous CIs.
+- **Spatial proxy/user/mixed:** same 200-node graph, different coverage. Inspect sweep monotonicity,
+  coverage warnings, zero/one controls and importance count/status guards. High reliability is
+  expected for this redundant graph; an observed score of one is not proof of zero failure risk.
+- In QGIS compare the matching `*-input.gpkg` with output `network.gpkg`. Node membership fields
+  and CIs should lie in [0,1]. For each non-loop road, up plus down counts equal the samples.
+  Inspect the new map in the small-case and spatial-mixed `figures/` folders.
+- Copy a config to compare `analysis.n_jobs: 1` and `4` using separate output folders. Numerical
+  connectivity results must agree; runtime/worker metadata can differ. Move an OD coordinate far
+  away in a copied CSV to check snapping warnings.
+
+See [README report interpretation](README.md#how-to-read-the-connectivity-reliability-report)
+for the meanings of the three different probabilities, importance and intervals. Generator
+options are `--nodes`, `--seed`, `--samples` and `--out`.
+
+### Verified default example findings
+
+All six CLI runs used **seed 42 / 10,000 samples**. Each small example's exact network value is
+inside its reported 95% CI; every available small-example exact importance is also inside its
+individual importance interval for this seed.
+
+| Scenario | Nodes / roads | Network estimate | 95% CI | Exact network value |
+| --- | --- | --- | --- | --- |
+| Half | 2 / 1 | 0.491800 | [0.482001, 0.501599] | 0.500000 |
+| Directed | 2 / 2 | 0.498000 | [0.488200, 0.507800] | 0.500000 |
+| Bridge | 6 / 7 | 0.814280 | [0.808851, 0.819709] | 0.81532443625 |
+| Spatial proxy | 200 / 1,046 | 1.000000 | [1.000000, 1.000000] | not enumerated |
+| Spatial user | 200 / 1,046 | 0.999848 | [0.999823, 0.999873] | not enumerated |
+| Spatial mixed | 200 / 1,046 | 1.000000 | [1.000000, 1.000000] | not enumerated |
+
+The half memberships are **1.0000 / 0.4918**, average **0.7459**; link importance is exactly 1.
+The directed OD values are **1.0000 forward / 0.4980 reverse**. The bridge's importance is
+**0.596561**, against exact **0.5961063375**; internal-road exact importances are approximately
+0.02609–0.03307. Maximum absolute membership errors against enumeration are **0.0082**, **0.0020**
+and **0.0018553** for half/directed/bridge respectively.
+
+Spatial proxy/mixed estimates at the highest p0 (0.05) are **0.999998 / 0.999996**. Fully supplied
+spatial results are invariant to p0. All spatial OD rows observed reachability 1; their Wilson
+intervals still allow a small unobserved failure probability. Available importance counts are
+**860 proxy**, **1,044 user** and **926 mixed**, out of 1,046 roads. The remaining proxy/mixed
+roads have insufficient down observations. User controls contain one `insufficient_down` road
+(p=0) and one `insufficient_up` road (p=1). The near-unity spatial results test redundancy and
+guards; the exact fixtures establish nontrivial connectivity and direction correctness.
+
+### Verification results
+
+- Targeted Ticket 09 suite: **33 passed** in **16.55 seconds**. Covers exact enumeration of
+  directed, parallel and weighted graphs; corrected two-node values; p=0/p=1 and rare-state guards;
+  hand-calculated Wilson/Welch intervals; 99% network CI coverage in at least 95 of 100 seeded
+  repetitions; actual one/four-worker equality; budget-constrained worker selection; shared-uniform
+  monotonicity; stable sample prefixes; OD validation/snapping/ties/warning truncation/BFS reuse;
+  pipeline fields, finite JSON, figure/OD cleanup, early CSV errors and all six generated scenarios.
+- All six default CLI examples completed. Independent artifact checks validated node/road counts,
+  finite JSON/probabilities, CI ordering/bounds, importance availability versus status, up/down
+  totals and ASCII reports wrapped to 100 columns. Exact small-network memberships/importances
+  were independently compared. The spatial-mixed membership map was visually inspected.
+- Full offline regression suite: **176 passed, 4 skipped** in **283.66 seconds**. The skips are
+  the existing three live OSM tests and the opt-in 60,000-node benchmark. All earlier ticket
+  regression tests passed with the new default connectivity stage enabled.
+- `git diff --check` passed. Verification used Python **3.13.3** in the existing temporary
+  environment. No new dependency was required.
+- You requested completion for now on **11 October 2026**, after discussing report generation
+  and the strengths/limits of the current tests. Additional sparse-bottleneck, repeated-coverage,
+  convergence and real-road experiments are documented as proposed follow-ups, not tests already
+  performed. No new experiments were run for this documentation update. Ticket 10 has not started.

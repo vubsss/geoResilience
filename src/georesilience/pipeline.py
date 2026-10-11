@@ -15,8 +15,9 @@ from . import __version__
 from .config import RunConfig
 from .centralities import centrality_report, compute_centralities
 from .classification import classify_network, classification_report, write_classification_figures
+from .connectivity import compute_connectivity, connectivity_report, load_od_pairs, write_od_reliability
 from .criticality import compute_criticality, criticality_report
-from .figures import FIGURE_FILENAMES, write_figures, write_robustness_figures
+from .figures import FIGURE_FILENAMES, write_connectivity_figure, write_figures, write_robustness_figures
 from .failure_probabilities import compute_failure_probabilities, failure_probabilities_report
 from .links import _link_rows
 from .network import cleaning_report, load_and_clean
@@ -51,7 +52,8 @@ def run(config: RunConfig, out_override: Path | None = None, overwrite: bool = F
         raise ValueError(f"output.dir exists and is not empty: {out_dir} (use --overwrite)")
     out_dir.mkdir(parents=True, exist_ok=True)
     if overwrite:
-        for name in ("network.gpkg", "summary.json", "report.txt", "run_config.yaml", "robustness_curves.csv"):
+        for name in ("network.gpkg", "summary.json", "report.txt", "run_config.yaml", "robustness_curves.csv",
+                     "od_reliability.csv"):
             (out_dir / name).unlink(missing_ok=True)
         for name in FIGURE_FILENAMES:
             (out_dir / "figures" / name).unlink(missing_ok=True)
@@ -63,6 +65,7 @@ def run(config: RunConfig, out_override: Path | None = None, overwrite: bool = F
 
     links = _link_rows(graph)
     failure_probabilities = compute_failure_probabilities(graph, links, config.reliability)
+    od_inputs = load_od_pairs(graph, config.reliability.od_pairs_csv)
     for row in links:
         row.update(failure_probabilities.link_metrics[row["link_id"]])
     analysis, node_metrics, edge_scores, statistics, computation = compute_centralities(
@@ -98,6 +101,15 @@ def run(config: RunConfig, out_override: Path | None = None, overwrite: bool = F
          "information": [criticality.information[node] for node in analysis.node_ids]},
         criticality.information_summary, robustness.summary)
     statistics["runtime_seconds"].update(classification.runtime_seconds)
+    connectivity = compute_connectivity(
+        graph, links, config.reliability, failure_probabilities.user_probabilities,
+        seed=config.analysis.seed, n_jobs=computation["n_jobs"],
+        budget_bytes=computation["memory_budget_bytes"], od_inputs=od_inputs)
+    statistics["runtime_seconds"].update(connectivity.runtime_seconds)
+    computation.update(connectivity.computation)
+    write_od_reliability(connectivity, out_dir / "od_reliability.csv")
+    for row in links:
+        row.update(connectivity.link_metrics[row["link_id"]])
     n = len(analysis.node_ids)
     nodes = []
     for i, (node, data) in enumerate(graph.nodes(data=True)):
@@ -107,6 +119,7 @@ def run(config: RunConfig, out_override: Path | None = None, overwrite: bool = F
                       **{name: float(values[i]) for name, values in node_metrics.items()},
                       **screening.node_metrics[node],
                       "information": criticality.information[node],
+                      **connectivity.node_metrics[node],
                       "geometry": Point(data["x"], data["y"])})
     crs = graph.graph.get("crs", "EPSG:4326")
     nodes_gdf = gpd.GeoDataFrame(nodes, geometry="geometry", crs=crs)
@@ -127,7 +140,7 @@ def run(config: RunConfig, out_override: Path | None = None, overwrite: bool = F
                  "directed_edge_count": graph.number_of_edges()},
         "cleaning": cleaning,
         "classification": classification.summary,
-        "reliability": failure_probabilities.summary,
+        "reliability": {**failure_probabilities.summary, **connectivity.summary},
         "computation": computation,
         "metrics": {"degree": {"mean": sum(degree.values()) / n if n else 0,
                                  "max": max(degree.values(), default=0),
@@ -148,6 +161,7 @@ def run(config: RunConfig, out_override: Path | None = None, overwrite: bool = F
     lines.extend(["", *robustness_report(robustness.summary)])
     lines.extend(["", *classification_report(classification.summary)])
     lines.extend(["", *failure_probabilities_report(failure_probabilities.summary)])
+    lines.extend(["", *connectivity_report(connectivity.summary)])
     lines = [line.encode("ascii", "backslashreplace").decode() for line in lines]
     lines = [textwrap.fill(line, width=100) if len(line) > 100 else line for line in lines]
     (out_dir / "report.txt").write_text("\n".join(lines) + "\n")
@@ -156,4 +170,5 @@ def run(config: RunConfig, out_override: Path | None = None, overwrite: bool = F
         write_figures(nodes_gdf, links_gdf, out_dir / "figures")
         write_robustness_figures(robustness, out_dir / "figures")
         write_classification_figures(classification, out_dir / "figures")
+        write_connectivity_figure(nodes_gdf, links_gdf, out_dir / "figures")
     return summary
