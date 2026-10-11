@@ -382,13 +382,15 @@ def compute_connectivity(graph, links, config, user_probabilities, *, seed, n_jo
                                "reliability_estimated_working_bytes": int(parent_bytes + jobs*worker_bytes)})
 
 
-def write_od_reliability(result, path):
+def write_od_reliability(result, path, travel_time=None):
     if not result.od_rows:
         return
+    extra = ("p_tt_ok", "p_tt_ok_ci_low", "p_tt_ok_ci_high", "tt0_min") if travel_time else ()
     with path.open("w", newline="") as stream:
-        writer = csv.DictWriter(stream, fieldnames=OD_OUTPUT_COLUMNS, lineterminator="\n")
+        writer = csv.DictWriter(stream, fieldnames=(*OD_OUTPUT_COLUMNS, *extra), lineterminator="\n")
         writer.writeheader()
-        writer.writerows(result.od_rows)
+        writer.writerows({**row, **(travel_time.get(row["label"], {}) if travel_time else {})}
+                         for row in result.od_rows)
 
 
 def connectivity_report(summary):

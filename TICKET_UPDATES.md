@@ -9,7 +9,7 @@
 - [x] **07 — Distribution classification** — completed, tested and manually verified by you, including five ER + five scale-free cases; inconclusive-label interpretation documented.
 - [x] **08 — Failure probabilities** — completed, tested and manually verified by you, including exact answers and three spatial scenarios; report interpretation documented.
 - [x] **09 — Connectivity reliability** — completed for now at your request; implementation and tests verified. Includes three exact-answer fixtures and three 200-node spatial scenarios; AP3 scope corrections and further testing recommendations documented.
-- [ ] **10 — Travel-time reliability** — not started.
+- [x] **10 — Travel-time reliability** — completed, tested and manually verified by you. Includes replaceable time models, exact route examples and a sparse spatial network; further validation recommendations documented.
 - [ ] **11 — Hansen accessibility (uniform masses)** — not started.
 - [ ] **12 — WorldPop population** — not started.
 - [ ] **13 — Zone aggregation** — not started.
@@ -127,7 +127,7 @@ georesilience run --config results/ticket02-graphml/run_config.yaml --out result
 
 Ticket **03** was implemented on **10 October 2026** and is **completed and manually verified
 by you**, as confirmed on **10 October 2026**.
-Tickets 04–09 are documented below; tickets 10–16 have not been started.
+Tickets 04–10 are documented below; tickets 11–16 have not been started.
 
 ### Changes
 
@@ -363,7 +363,7 @@ is preserved. All roads are 100 m except the 150 m backup road in the parallel e
 
 Ticket **05** was implemented on **10 October 2026** and is **completed, tested and manually verified
 by you**, as confirmed on **10 October 2026**. Tickets 02, 03 and 04 remain completed and manually verified.
-Tickets 06–09 are documented below; tickets 10–16 have not been started.
+Tickets 06–10 are documented below; tickets 11–16 have not been started.
 
 ### Changes
 
@@ -513,7 +513,7 @@ All nodes and roads are selected; `all: true` still leaves analytic bridges in t
 Ticket **06** was implemented on **10 October 2026** and is **completed, tested and manually
 verified by you**, as confirmed on **10 October 2026**, including the ER and scale-free examples.
 Your confirmation of Ticket 05's results has been recorded above.
-Tickets 07–09 are documented below; tickets 10–16 have not been started.
+Tickets 07–10 are documented below; tickets 11–16 have not been started.
 
 ### Changes
 
@@ -688,7 +688,7 @@ strategy and metric; these finite examples do not establish universal model supe
 Ticket **07** was implemented on **10 October 2026** and is **completed and manually verified
 by you**, as confirmed on **11 October 2026**. Verification includes the requested
 **five ER + five scale-free graph benchmark** and review of its inconclusive labels.
-Tickets 08–09 are documented below; tickets 10–16 have not been started.
+Tickets 08–10 are documented below; tickets 11–16 have not been started.
 
 ### Changes
 
@@ -930,7 +930,7 @@ these observed limitations.
 
 Ticket **08** was implemented on **11 October 2026** and is **completed and manually verified
 by you**, as confirmed on **11 October 2026**. Verification covers the ticket's exact-answer and
-spatial examples. Ticket 09 is documented below; tickets 10–16 have not been started.
+spatial examples. Tickets 09–10 are documented below; tickets 11–16 have not been started.
 
 ### Changes
 
@@ -985,7 +985,7 @@ and empty lines. Blank values are missing; zero is supplied. Unknown rows are st
 and an unknown blank row contributes both an unmatched-ID and blank-value warning.
 
 This stage assigns probabilities; it does not draw closures or estimate connectivity. Ticket 06
-removal experiments retain their existing fraction-based behavior. Ticket 09 uses and Ticket 10 can reuse
+removal experiments retain their existing fraction-based behavior. Tickets 09 and 10 use
 `probabilities_at_p0(links, user_probabilities, p0)` for each sweep value. Synthetic probabilities
 test implementation correctness, not real-world hazard calibration.
 
@@ -1101,12 +1101,12 @@ results and their interpretation. The README now includes
 - You confirmed manual verification on **11 October 2026**. Ticket 08 is complete;
   Ticket 09 is documented below.
 
-## Current ticket: 09 — Connectivity reliability
+## Ticket 09 — Connectivity reliability
 
 Ticket **09** was implemented on **11 October 2026** and is **completed for now at your request**,
 as confirmed on **11 October 2026**. Additional validation remains separate follow-up work in
 [plan/TEST_RECOMMENDATIONS.md](plan/TEST_RECOMMENDATIONS.md#09--connectivity-reliability-priority-follow-up).
-Tickets 01–08 retain their completed status. Tickets 10–16 have not been started.
+Tickets 01–08 retain their completed status. Ticket 10 is documented below; tickets 11–16 have not been started.
 
 ### Changes
 
@@ -1266,4 +1266,172 @@ guards; the exact fixtures establish nontrivial connectivity and direction corre
 - You requested completion for now on **11 October 2026**, after discussing report generation
   and the strengths/limits of the current tests. Additional sparse-bottleneck, repeated-coverage,
   convergence and real-road experiments are documented as proposed follow-ups, not tests already
-  performed. No new experiments were run for this documentation update. Ticket 10 has not started.
+  performed. No new experiments were run for this documentation update. Ticket 10 is documented below.
+
+## Current ticket: 10 — Travel-time reliability
+
+Ticket **10** was implemented on **11 October 2026** and is **completed and manually verified
+by you**, as confirmed on **11 October 2026**.
+Tickets 01–09 retain their completed status. Tickets 11–16 have not been started.
+
+### Changes
+
+- Added validated `travel_time` configuration: enabled, samples (1,000), sampled origins (200),
+  relative tolerance tau (0.5), optional highway-class speeds, time-model selection and supplied
+  time attribute. Tau must be finite/nonnegative, speeds finite/positive and samples at least two.
+- Added `src/georesilience/time_models.py`, separating cost assignment from routing. The default
+  model uses `3.6 * length_m / speed_kph` seconds and OSMnx speed imputation. Numeric km/h, mph,
+  lane/list values and OSMnx-supported implicit codes are normalized; unsupported tags are missing.
+  The isolated implicit-code adapter follows the installed OSMnx 2.x parser and has explicit tests.
+- Added source/length coverage: tagged, user-table, observed class mean and network class mean.
+  Physical-road length is apportioned across directed edges, avoiding reciprocal double counting
+  while accounting for asymmetric tags. Self-loops are excluded from both inference and coverage.
+  With no usable non-loop speed tags and no table, the default stage skips with a clear reason.
+- Added `src/georesilience/travel_time.py`: reproducible origin selection, a separate seeded
+  closure stream, directed minimum-time parallel arcs, baseline/damaged shortest paths, per-sample
+  threshold evaluation and bounded-memory aggregation. Extra OD origins are included without
+  changing the network origin sample. All arcs of a failed physical road disappear together.
+- Added network and sampled-origin estimates with normal 95% intervals across sample fractions;
+  OD estimates use Wilson intervals. Node `p_tt_ok` and its interval fields are null for unsampled
+  origins. Self-pairs are excluded; same-node OD succeeds with zero baseline. Baseline-unreachable
+  pairs always fail and are counted. No-positive-distinct-pair cases remain undefined.
+- Added bounded-memory travel-time-factor percentiles and bin bounds. Ratios pool reachable
+  distinct journeys, including late journeys, with an exact no-detour bin. Disconnected journeys
+  fail reliability but do not enter ratios. Histogram-range limits/counts are explicit.
+- Integrated root `summary.json.travel_time`, report output, node fields and merged OD CSV fields
+  (`p_tt_ok`, separately named time CI fields, `tt0_min`). Existing Ticket 09 fields are preserved.
+  Disabled/skipped stages and overwrite remove stale time results without losing connectivity.
+- Added `examples/create_ticket10_demo.py`, seven scenarios with input GeoPackages, GraphMLs,
+  probability/OD CSVs, YAMLs, exact small-case expectations and a manifest. Generated data are
+  gitignored; source and tests are tracked. Added `tests/test_travel_time.py` and README guidance.
+
+### Time-function flexibility and clarifications to the original plan
+
+The original [Ticket 10](plan/tickets/10-travel-time-reliability.md) remains the planning baseline.
+
+1. **Your requested extension:** routing accepts supplied directed-edge seconds through a
+   `PreparedTimeModel`, rather than embedding distance/speed arithmetic in the failure loop.
+   YAML `time_model: edge_attribute` uses any named seconds attribute. Python callers can supply
+   `run(config, time_model=provider)` where `prepare(graph, config)` returns costs and metadata.
+   An optional scenario evaluator receives the global sample index and failed physical-link IDs,
+   enabling different static cost snapshots per sample. A custom delay model is tested explicitly.
+2. **Model reproducibility:** custom Python-provider runs save `time_model: custom` in resolved
+   YAML and require the provider again on rerun. They cannot silently revert to distance/speed.
+   Model name, assumptions and supplied parameters are recorded in the summary. YAML edge-attribute
+   runs need only their config and input data. Models must return finite positive seconds; the
+   engine supports additive costs, not full traffic assignment or turn/departure-time routing.
+3. **Threshold interpretation:** tau is user-controlled, with the planned default 0.5. It expresses
+   acceptable relative delay, not an absolute deadline or a literature-derived universal cutoff.
+   Equality counts as success, with a tiny tolerance for equivalent floating-point path sums.
+4. **Pair/origin definitions:** self-pairs are excluded from network denominators and ratio
+   distributions, avoiding zero/zero ratios. Same-node OD remains explicitly successful. Origins
+   are sampled without replacement and capped at node count. Only sampled origins get node scores;
+   extra OD origins do not alter the network estimate. These details were underspecified originally.
+5. **Intervals and uncertainty:** added origin interval fields and separately named OD time CIs.
+   Network/origin intervals use independent sample fractions, rather than treating destinations
+   within a draw as independent Bernoulli trials. Intervals condition on selected origins, the
+   time model and failure probabilities; they exclude origin-selection and calibration uncertainty.
+   Constant observed scores retain the documented normal-interval rare-event limitation.
+6. **Memory and quantiles:** baselines are calculated once and shared as a temporary disk-backed
+   array; damaged shortest paths are chunked. Baseline disk bytes and estimated working arrays are
+   reported separately. Histogram percentiles are approximate and include bin bounds; no ratio
+   history is stored. Underflow/overflow percentiles are unavailable rather than falsely precise.
+7. **Scope:** the free-flow model is a speed-limit/imputation proxy with no congestion. Supplied
+   times may contain explicitly modelled factors, but no traffic model is claimed. The stage uses
+   primary p0 only; its fixed indexed seed stream is separate from Ticket 09, as planned. No new
+   figure is required by Ticket 10; sampled nodes can be styled directly in QGIS.
+
+### Run and manually verify
+
+From the repository root, with your environment activated (the existing temporary environment
+is `/tmp/georesilience-ticket02-venv` if still available):
+
+```sh
+python examples/create_ticket10_demo.py
+georesilience run --config data/ticket10-demo/tight.yaml --overwrite
+georesilience run --config data/ticket10-demo/boundary.yaml --overwrite
+georesilience run --config data/ticket10-demo/relaxed.yaml --overwrite
+georesilience run --config data/ticket10-demo/skip.yaml --overwrite
+georesilience run --config data/ticket10-demo/speed-table.yaml --overwrite
+georesilience run --config data/ticket10-demo/attribute.yaml --overwrite
+georesilience run --config data/ticket10-demo/sparse.yaml --overwrite
+PYTHONPATH= PYTEST_DISABLE_PLUGIN_AUTOLOAD=1 python -m pytest -q tests/test_travel_time.py
+```
+
+Read **Travel-time reliability** in each `results/ticket10-*/report.txt`. Compare the small
+examples with `data/ticket10-demo/expected.json`, then inspect merged `od_reliability.csv` and
+`network.gpkg` node fields in QGIS. Input copies are `data/ticket10-demo/*-input.gpkg`.
+
+- Tight: 1-minute baseline, 3-minute always-available alternative, tau=0.5. Reliability should be
+  near 0.5, even though the destination stays reachable. Same-node OD equals one.
+- Boundary/relaxed: tau=2 and 2.5 accept the slow alternative; reliability equals one.
+- Skip: no speeds/table; expect `skipped: no speed data`, null node scores and no time CSV fields.
+- Speed table: residential=30 km/h gives 2-minute baseline and reliability near 0.5.
+- Attribute: supplied times add signal delays without speed tags. Baseline is 75 seconds
+  (1.25 minutes), alternative 210 seconds, reliability near 0.5. This exercises another time function.
+- Sparse: 200 nodes / 361 roads, two grids joined by one vulnerable road. Inspect delay/failure
+  variation, actual origin count and nulls at unsampled nodes; this avoids the saturated Ticket 09
+  dense-spatial examples. These are hypothetical probabilities, not calibrated hazards.
+- Copy a YAML and change tau with inputs/seed fixed: success must not decrease as tau increases.
+  Compare one/four workers and constrained memory in separate outputs; numerical results agree.
+
+The [README](README.md#travel-time-reliability-ticket-10) explains the time-model API, coverage,
+report interpretation, approximate percentiles and confidence-interval limits. Generator options
+are `--nodes` (even, at least 20), `--samples`, `--seed` and `--out`.
+
+### Verified default example findings
+
+All seven CLI examples completed with seed 42, **1,000 time samples** and **2,000 connectivity
+samples**. Connectivity and time draws intentionally differ.
+
+| Example | Time model / tau | Network time reliability | 95% CI | Forward baseline |
+| --- | --- | --- | --- | --- |
+| Tight | free_flow / 0.5 | 0.505000 | [0.473996, 0.536004] | 1 minute |
+| Boundary | free_flow / 2 | 1.000000 | [1.000000, 1.000000] | 1 minute |
+| Relaxed | free_flow / 2.5 | 1.000000 | [1.000000, 1.000000] | 1 minute |
+| Skip | free_flow / 0.5 | skipped: no speed data | not computed | not computed |
+| Speed table | free_flow / 0.5 | 0.505000 | [0.473996, 0.536004] | 2 minutes |
+| Attribute | edge_attribute / 0.5 | 0.505000 | [0.473996, 0.536004] | 1.25 minutes |
+| Sparse | free_flow / 0.25 | 0.824866 | [0.810780, 0.838952] | 6.449772 minutes across bridge |
+
+The sparse input has 361 physical roads / 722 directed edges: internal-road p=0.08 and joining
+bridge p=0.30. It selects **24 origins**, routes **26 including OD**, and leaves other node time
+scores null. Across-bridge forward/reverse OD reliability is **0.704**, nearby OD **0.928**.
+Reachable-journey factor p50/p90/p99 is approximately **1 / 1.087980 / 1.514174**. The small
+free-flow alternative has true factor 3, reported **2.992776** with bin bounds containing 3;
+the custom-time alternative has true factor 2.8, reported **2.797547** with bounds containing 2.8.
+
+### Verification results
+
+- Final targeted Ticket 10 suite: **45 passed** in **21.53 seconds**. Covers exact fast/slow
+  thresholds and equality; every failure state against independent NetworkX directed/parallel
+  shortest paths; multi-node MC versus exact enumeration; 99% network CI coverage across 100
+  predefined seeds; one/four-worker and chunk-budget equality; stable sample prefixes and tau
+  monotonicity; OD-origin independence; speed units, lists, inference, coverage, self-loops and
+  skip/table behavior; static attributes and scenario-time callbacks; provider validation/units;
+  histogram bounds/extremes; empty/singleton/all-closed cases; config validation, pipeline merge,
+  custom-model saved-config guards, overwrite cleanup and all seven generated scenarios.
+- The combined Ticket 09/10 suite passed **77 tests** before the final contract/edge-case
+  additions; the final targeted run above verifies the expanded 45 Ticket 10 cases.
+- Independent artifact checks across all seven defaults verified finite JSON, node counts,
+  sampled/null fields, CI ordering/bounds, source percentages, merged connectivity/time OD fields,
+  skip behavior and ASCII reports wrapped to 100 columns. Existing probability and connectivity
+  outputs remain available in every case.
+- Full offline regression suite: **221 passed, 4 skipped** in **300.80 seconds**. The skips are
+  the existing three live OSM tests and opt-in 60,000-node benchmark. The final targeted run also
+  verifies the self-loop speed-inference guard added while regression testing was running.
+- `git diff --check` and local documentation-file link validation passed. Verification used
+  Python **3.13.3** in the existing temporary environment; no new dependency was required.
+- You confirmed manual verification on **11 October 2026**, after reviewing the generated
+  results and discussing the example names, Dijkstra time routing and the sparse report's
+  `tt_reliability` value. Ticket 10 is complete; Ticket 11 has not been started.
+
+### Additional validation follow-ups
+
+[plan/TEST_RECOMMENDATIONS.md](plan/TEST_RECOMMENDATIONS.md#10--travel-time-reliability) now marks
+the existing threshold/direction/self-pair and speed-handling recommendations as covered by
+the implemented tests. Further work remains proposed: origin-sampling sensitivity, broader
+interval coverage including rare failures, histogram-tail accuracy, custom-provider behavior
+across workers, real-road/time-model comparisons and larger memory/disk benchmarks. These do
+not block completion and have not been run for this documentation update. Existing automated
+results above are preserved; no new software tests were necessary for this documentation change.

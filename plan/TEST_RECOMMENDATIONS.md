@@ -5,12 +5,15 @@ alongside the acceptance criteria in [tickets/](tickets/). Implementation/comple
 and evidence from tests already run remain in [TICKET_UPDATES.md](../TICKET_UPDATES.md).
 
 These recommendations do not reopen completed tickets. Ticket 09 is completed for now at
-your request; its additional experiments remain follow-up work. Tickets 10–16 are prospective:
+your request; its additional experiments remain follow-up work. Ticket 10 is completed and
+manually verified by you as of 11 October 2026, with verification evidence in the ticket log.
+Tickets 11–16 are prospective:
 their recommendations should be reviewed when those tickets are implemented.
 
 Unchecked items are proposed follow-ups, not claims that the corresponding behavior is
-currently untested. Some overlap existing checks but extend their graph families, sizes or
-parameter ranges. No new experiments were run when creating this document. Record actual
+currently untested. Checked items reference existing test evidence. Some recommendations overlap
+existing checks but extend their graph families, sizes or parameter ranges. No new experiments
+were run when creating this document or recording Ticket 10's manual completion. Record actual
 commands, configs, seeds, results and limitations before marking an item complete.
 
 ## How to use this backlog
@@ -140,14 +143,43 @@ These experiments strengthen statistical and practical evidence. The implementat
 test suite and documented assumptions support completion for now; calibrated real-world
 reliability claims require additional evidence.
 
-## 10 — Travel-time reliability (prospective)
+## 10 — Travel-time reliability
 
-- [ ] Extend the fast/slow-route exact fixture across the threshold boundary, directed
+Ticket 10 is completed and manually verified on 11 October 2026. It includes exact fast/slow
+threshold tests, directed/parallel state enumeration,
+speed-unit/inference/coverage checks, custom static/scenario time models, fixed-origin MC coverage,
+worker/chunk reproducibility and a 200-node sparse bottleneck example. The broader follow-ups
+below retain unchecked status; one tested setting does not establish coverage in every regime.
+The existing evidence is **45 targeted tests passed** and **221 regression tests passed, 4 skipped**;
+these are implementation-stage results, not new runs for this update. See
+[tests/test_travel_time.py](../tests/test_travel_time.py) and the
+[ticket log](../TICKET_UPDATES.md#current-ticket-10--travel-time-reliability).
+
+- [x] Extend the fast/slow-route exact fixture across the threshold boundary, directed
   disconnections and OD endpoints snapped to the same node; define self-pair treatment explicitly.
-- [ ] Test mixed speed tags, supported units, missing data and user-table fallbacks. Check
+- [x] Test mixed speed tags, supported units, missing data and user-table fallbacks. Check
   length-weighted speed coverage and the no-speed-data skip rule without inventing speeds.
-- [ ] On a small graph, compare all-origin/all-state answers against sampled origins and closures;
-  separately assess origin-sampling and failure-sampling uncertainty and percentile approximation.
+- [ ] Extend existing exact small-graph comparisons to selected origin subsets, then vary origin
+  counts (for example 2, 8, 24 and all nodes where possible) over predefined seeds on a fixed
+  sparse network. Compare with all-origin values and separate origin-selection variability from
+  the reported closure-sampling CI. Do not treat destinations within a draw as independent trials.
+- [ ] Extend repeated-seed CI coverage checks to trees, cycles and directed bottlenecks at common
+  and rare closure probabilities, for network, origin and OD intervals. Record unavailable or
+  constant-score cases explicitly; a [1,1] normal interval does not exclude unseen rare failures.
+- [ ] Compare histogram p50/p90/p99 and bin bounds with exact pooled ratios on small deterministic
+  fixtures containing a large atom at one and a thin high-delay tail. Vary the tail mass around
+  percentile cutoffs and exercise underflow/overflow; separate bin approximation from MC error.
+- [ ] Run deterministic scenario-time providers with one/four workers and different chunk sizes.
+  Include providers depending on failed-link IDs and global sample index, plus asymmetric edge
+  times. Check identical results and baseline semantics; verify no mutable worker-local state or
+  unseeded randomness changes costs according to execution order.
+- [ ] Compare distance/speed and supplied-time models on a frozen real extract with independently
+  justified signal/road-condition delays. Vary the selected origins over predefined seeds and
+  record sensitivity to model, tau and origin count. Future congestion or time-dependent models
+  need their own validation; the replaceable cost interface does not establish those models.
+- [ ] Measure peak memory, temporary baseline disk use and runtime on a larger frozen network
+  while varying origins, workers and budgets. Verify temporary-file cleanup after a controlled
+  failure in a disposable test directory; do not infer city-scale performance from 200-node runs.
 
 ## 11 — Hansen accessibility (prospective)
 

@@ -23,6 +23,8 @@ from .links import _link_rows
 from .network import cleaning_report, load_and_clean
 from .screening import redundancy_report, screen_network
 from .robustness import compute_robustness, robustness_report, write_curves
+from .time_models import prepare_time_model
+from .travel_time import compute_travel_time, travel_time_report
 
 
 def _versions():
@@ -35,16 +37,20 @@ def _versions():
     return result
 
 
-def _resolved_config(config, out_dir, computation):
+def _resolved_config(config, out_dir, computation, custom_time_model=False):
     values = config.model_dump(mode="json")
     values["output"]["dir"] = str(out_dir)
     values["analysis"]["n_jobs"] = computation["n_jobs"]
     values["analysis"]["max_memory_gb"] = computation["max_memory_gb"]
     values["versions"] = _versions()
+    if custom_time_model:
+        # A Python provider cannot be reconstructed from YAML. Refuse accidental
+        # reruns with the default formula; callers must supply their provider again.
+        values["travel_time"]["time_model"] = "custom"
     return values
 
 
-def run(config: RunConfig, out_override: Path | None = None, overwrite: bool = False):
+def run(config: RunConfig, out_override: Path | None = None, overwrite: bool = False, *, time_model=None):
     if config.analysis.directed_centrality:
         raise NotImplementedError("analysis.directed_centrality: true is planned; use false for Ticket 03")
     out_dir = out_override or config.output.dir
@@ -66,6 +72,7 @@ def run(config: RunConfig, out_override: Path | None = None, overwrite: bool = F
     links = _link_rows(graph)
     failure_probabilities = compute_failure_probabilities(graph, links, config.reliability)
     od_inputs = load_od_pairs(graph, config.reliability.od_pairs_csv)
+    prepared_times = prepare_time_model(graph, config.travel_time, time_model)
     for row in links:
         row.update(failure_probabilities.link_metrics[row["link_id"]])
     analysis, node_metrics, edge_scores, statistics, computation = compute_centralities(
@@ -107,7 +114,13 @@ def run(config: RunConfig, out_override: Path | None = None, overwrite: bool = F
         budget_bytes=computation["memory_budget_bytes"], od_inputs=od_inputs)
     statistics["runtime_seconds"].update(connectivity.runtime_seconds)
     computation.update(connectivity.computation)
-    write_od_reliability(connectivity, out_dir / "od_reliability.csv")
+    travel_time = compute_travel_time(
+        graph, links, config.travel_time, config.reliability, failure_probabilities.user_probabilities,
+        seed=config.analysis.seed, n_jobs=computation["n_jobs"],
+        budget_bytes=computation["memory_budget_bytes"], od_inputs=od_inputs, prepared=prepared_times)
+    statistics["runtime_seconds"].update(travel_time.runtime_seconds)
+    computation.update(travel_time.computation)
+    write_od_reliability(connectivity, out_dir / "od_reliability.csv", travel_time.od_metrics)
     for row in links:
         row.update(connectivity.link_metrics[row["link_id"]])
     n = len(analysis.node_ids)
@@ -120,6 +133,7 @@ def run(config: RunConfig, out_override: Path | None = None, overwrite: bool = F
                       **screening.node_metrics[node],
                       "information": criticality.information[node],
                       **connectivity.node_metrics[node],
+                      **travel_time.node_metrics[node],
                       "geometry": Point(data["x"], data["y"])})
     crs = graph.graph.get("crs", "EPSG:4326")
     nodes_gdf = gpd.GeoDataFrame(nodes, geometry="geometry", crs=crs)
@@ -141,6 +155,7 @@ def run(config: RunConfig, out_override: Path | None = None, overwrite: bool = F
         "cleaning": cleaning,
         "classification": classification.summary,
         "reliability": {**failure_probabilities.summary, **connectivity.summary},
+        "travel_time": travel_time.summary,
         "computation": computation,
         "metrics": {"degree": {"mean": sum(degree.values()) / n if n else 0,
                                  "max": max(degree.values(), default=0),
@@ -162,10 +177,12 @@ def run(config: RunConfig, out_override: Path | None = None, overwrite: bool = F
     lines.extend(["", *classification_report(classification.summary)])
     lines.extend(["", *failure_probabilities_report(failure_probabilities.summary)])
     lines.extend(["", *connectivity_report(connectivity.summary)])
+    lines.extend(["", *travel_time_report(travel_time.summary)])
     lines = [line.encode("ascii", "backslashreplace").decode() for line in lines]
     lines = [textwrap.fill(line, width=100) if len(line) > 100 else line for line in lines]
     (out_dir / "report.txt").write_text("\n".join(lines) + "\n")
-    (out_dir / "run_config.yaml").write_text(yaml.safe_dump(_resolved_config(config, out_dir, computation), sort_keys=False))
+    (out_dir / "run_config.yaml").write_text(yaml.safe_dump(
+        _resolved_config(config, out_dir, computation, time_model is not None), sort_keys=False))
     if config.output.figures:
         write_figures(nodes_gdf, links_gdf, out_dir / "figures")
         write_robustness_figures(robustness, out_dir / "figures")

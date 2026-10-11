@@ -94,6 +94,25 @@ class ReliabilityConfig(StrictModel):
         return self
 
 
+class TravelTimeConfig(StrictModel):
+    enabled: bool = True
+    samples: int = Field(default=1000, ge=2)
+    n_origins: int = Field(default=200, ge=1)
+    tau: float = Field(default=0.5, ge=0, allow_inf_nan=False)
+    highway_speeds_kph: dict[str, Annotated[float, Field(gt=0, allow_inf_nan=False)]] | None = None
+    time_model: Literal["free_flow", "edge_attribute", "custom"] = "free_flow"
+    time_attribute: str = "travel_time_s"
+
+    @model_validator(mode="after")
+    def validate_model(self):
+        if self.highway_speeds_kph is not None and (not self.highway_speeds_kph or
+                                                   any(not key.strip() for key in self.highway_speeds_kph)):
+            raise ValueError("highway_speeds_kph must contain at least one nonempty highway class")
+        if not self.time_attribute.strip():
+            raise ValueError("time_attribute must be nonempty")
+        return self
+
+
 class RunConfig(StrictModel):
     input: InputConfig
     network: NetworkConfig = Field(default_factory=NetworkConfig)
@@ -102,6 +121,7 @@ class RunConfig(StrictModel):
     criticality: CriticalityConfig = Field(default_factory=CriticalityConfig)
     robustness: RobustnessConfig = Field(default_factory=RobustnessConfig)
     reliability: ReliabilityConfig = Field(default_factory=ReliabilityConfig)
+    travel_time: TravelTimeConfig = Field(default_factory=TravelTimeConfig)
     output: OutputConfig = Field(default_factory=OutputConfig)
 
 

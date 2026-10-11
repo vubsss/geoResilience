@@ -1,9 +1,10 @@
 # GeoResilience
 
-GeoResilience analyzes road network structure and resilience. Tickets 01–09 provide input,
+GeoResilience analyzes road network structure and resilience. Tickets 01–10 provide input,
 cleaning, physical road links, exact centralities, redundancy screening, single-road damage,
 information centrality, cumulative attack/failure experiments, distribution classification,
-per-event road failure probabilities, Monte Carlo connectivity reliability, and auditable outputs. Later analysis tickets are
+per-event road failure probabilities, Monte Carlo connectivity and travel-time reliability,
+and auditable outputs. Later analysis tickets are
 tracked in [TICKET_UPDATES.md](TICKET_UPDATES.md).
 
 Install with Python 3.10 or newer:
@@ -99,6 +100,14 @@ reliability:
   od_pairs_csv: null
   min_down_count: 30
   min_up_count: 30
+travel_time:
+  enabled: true
+  samples: 1000
+  n_origins: 200
+  tau: 0.5
+  highway_speeds_kph: null
+  time_model: free_flow
+  time_attribute: travel_time_s
 output:
   dir: results/
   figures: true
@@ -926,7 +935,7 @@ source and are excluded from templates and coverage. Tiny probabilities are comp
 The primary `p0` supplies exported probabilities. The sweep is sorted, deduplicated and always
 includes that primary value; every entry must be finite and in `[0,1]`. No failure simulations
 are performed by this assignment stage. Ticket 09 consumes these probabilities for connectivity;
-Ticket 10 will use them for travel-time reliability. Ticket 06's existing
+Ticket 10 uses them for travel-time reliability. Ticket 06's existing
 fraction-based removal experiments retain their own definition.
 `probabilities_at_p0(links, user_probabilities, p0)` returns probabilities keyed by non-self-loop
 `link_id`, so later stages can reuse the inputs for each sweep without reloading the CSV.
@@ -1080,7 +1089,7 @@ Independent closures, the SCC score, node membership, conditional importance and
 intervals are framework choices. Spatially correlated hazards and correlations between physical
 roads sharing an OSM way are outside this model. Synthetic probabilities validate calculations,
 not real-world road risks. The approved corrections to the original ticket are listed in
-[TICKET_UPDATES.md](TICKET_UPDATES.md#current-ticket-09--connectivity-reliability).
+[TICKET_UPDATES.md](TICKET_UPDATES.md#ticket-09--connectivity-reliability).
 
 ### Configure sampling and OD pairs
 
@@ -1245,3 +1254,195 @@ The default runs produced network estimates **0.4918** (half), **0.4980** (direc
 estimates were **1.0 proxy**, **0.999848 user** and **1.0 mixed**: this redundant graph rarely
 disconnects under these probabilities. The observed 1.0 values do not establish zero failure risk.
 Detailed counts and findings are in [TICKET_UPDATES.md](TICKET_UPDATES.md#verified-default-example-findings).
+
+## Travel-time reliability (Ticket 10)
+
+Ticket 10 is completed and manually verified by you as of **11 October 2026**. Implementation
+details and test evidence are in [TICKET_UPDATES.md](TICKET_UPDATES.md#current-ticket-10--travel-time-reliability);
+additional validation remains tracked in [plan/TEST_RECOMMENDATIONS.md](plan/TEST_RECOMMENDATIONS.md#10--travel-time-reliability).
+
+This stage asks whether directed journeys remain within a **user-chosen relative delay** after
+road closures. It uses the same physical-road probability model as Ticket 09, at the primary p0,
+with a separate reproducible random stream. It is a framework extension, not an AP3 replication
+or a traffic simulation. The default model uses **free-flow speeds; no traffic (Tier 4)**.
+
+```yaml
+travel_time:
+  enabled: true
+  samples: 1000
+  n_origins: 200
+  tau: 0.5
+  highway_speeds_kph: null   # optional, e.g. {residential: 30, primary: 50}
+  time_model: free_flow
+```
+
+`tau` is finite and nonnegative. A journey succeeds only when reachable and its time is
+`<= (1 + tau) * baseline_time`, including equality within floating-point tolerance. With a
+20-minute baseline and `tau: 0.5`, up to 30 minutes is acceptable. The default 50% tolerance is
+a configurable assumption, not a threshold inferred from the input or established by AP3.
+Absolute deadlines and different tolerances for individual OD pairs are future options.
+`samples` must be at least two; `n_origins` at least one. `enabled: false` disables the stage.
+
+### Distance, speeds and replaceable time models
+
+The default `free_flow` model calculates seconds as `3.6 * length_m / speed_kph`. Speed tags support
+numeric km/h, explicit km/h or mph, lane values separated by `|`, simplified lists and implicit
+codes supported by the installed OSMnx 2.x parser. Lists/lane speeds are averaged after unit
+conversion; this is a simplification, not reconstruction of original segment travel times.
+Unsupported/unusable tags count as missing data. No existing arbitrary `speed_kph` attribute is
+silently treated as a calibrated speed source.
+
+OSMnx fills missing speeds using a user-supplied highway-class table where provided, otherwise
+observed class means. Classes with no values use the mean of available class/table speeds.
+The provider records `tagged`, `user_table`, `class_mean` and `network_class_mean` length coverage.
+Each physical road's length is split across its directed edges for this calculation, so differing
+directional tags contribute partial coverage and reciprocal roads are not counted twice.
+Self-loops are excluded. Tagged speed limits are a free-flow proxy, not observed journey speeds.
+
+With **no usable non-loop speed tags and no speed table**, the default stage returns
+`skipped: no speed data`; the rest of the pipeline still succeeds. This affects older synthetic
+examples that have distances but no speeds. No default speed table is invented.
+
+Time assignment is separate from routing in `src/georesilience/time_models.py`. To incorporate
+other factors now using precomputed **directed-edge seconds**, use:
+
+```yaml
+travel_time:
+  time_model: edge_attribute
+  time_attribute: modelled_time_s
+  tau: 0.5
+```
+
+Every non-loop directed edge must have a finite, strictly positive value in that attribute.
+It may already include distance, signals, road condition or other explicitly modelled factors.
+This mode does not require speed tags. The Ticket 10 attribute example uses
+`modelled_time_s = 3.6 * length_m / 60 + signal_delay_s`; its delay values are synthetic.
+
+Python callers can provide a model implementing `prepare(graph, config)`:
+
+```python
+from georesilience.config import load_config
+from georesilience.pipeline import run
+from georesilience.time_models import PreparedTimeModel
+
+class SignalDelayModel:
+    def prepare(self, graph, config):
+        seconds = {
+            (u, v, key): data["length"] / 10 + float(data.get("signal_delay_s", 0))
+            for u, v, key, data in graph.edges(keys=True, data=True) if u != v
+        }
+        return PreparedTimeModel(seconds, {
+            "status": "computed", "time_model": "distance_plus_signal_delay",
+            "time_function": "length_m / 10 + signal_delay_s",
+            "assumptions": "illustrative 10 m/s speed plus supplied signal delays",
+            "parameters": {"speed_mps": 10},
+        })
+
+run(load_config("my.yaml"), overwrite=True, time_model=SignalDelayModel())
+```
+
+For scenario-specific costs, `PreparedTimeModel` also accepts a `scenario_times(context)` callable
+returning the same edge-to-seconds mapping. `TimeContext.sample_index` is `None` for the baseline;
+otherwise it gives the global sample index and `closed_link_ids` identifies failed physical roads.
+The model is called for every sample, including those with no closures. It should be deterministic,
+serializable for worker processes and return positive finite seconds for every non-loop arc.
+Model identity, assumptions and supplied metadata are saved in `summary.json.travel_time`.
+
+Saved configs from Python-provider runs use `time_model: custom`; rerunning them requires passing
+the provider again. A CLI rerun refuses to silently substitute the default formula. Supplied
+edge-attribute runs are reproducible from YAML and their input data alone.
+
+This interface supports **additive edge costs and static cost snapshots per scenario**. Actual
+traffic assignment, turn-dependent costs and departure-time-dependent routing need additional
+routing/model work; a hook alone does not implement them.
+
+### How to read the Travel-time reliability report
+
+The report states status, time model/function, `tau`, samples, selected origins and speed coverage.
+Up to `n_origins` distinct nodes are selected uniformly without replacement, capped at network
+size. Every other node is a destination. Extra OD origins are routed too, but do not change the
+network sample. The report/JSON records the actual origin count and IDs.
+
+- **`tt_reliability`:** mean successful fraction of sampled-origin/distinct-destination pairs,
+  with a normal 95% interval across failure samples. A value of 0.8 means 80% of those potential
+  directed journeys met the chosen delay criterion on average; it is not observed demand coverage.
+- **Node `p_tt_ok`:** destination-success fraction averaged across samples for that origin.
+  Only selected origins have values; other nodes are null even when routed for an OD. Node CIs
+  use per-sample destination fractions, not an independence assumption for all destinations.
+- **OD `p_tt_ok`:** probability that the specific directed journey meets its threshold, with a
+  Wilson interval. `tt0_min` is its intact-network baseline in minutes. These fields join Ticket
+  09's reachability fields in `od_reliability.csv`, with separately named time interval fields.
+- **Travel-time factors:** pooled damaged/baseline ratios over reachable distinct journeys from
+  sampled origins, including journeys exceeding the tolerance. Disconnected journeys are excluded
+  from ratios but fail reliability. Thus factor percentiles alone do not measure connectivity.
+
+Self-pairs are excluded from network scores and ratios. Same-node OD pairs succeed with baseline
+zero. Baseline-unreachable journeys always fail and are counted separately; they normally do not
+occur in the pipeline's cleaned largest-SCC baseline. With no distinct node pairs, the network
+estimate is undefined. Directionality always follows the cleaned directed graph.
+
+Factor percentiles use bounded-memory logarithmic histograms with an exact bin for ratio one.
+The report gives approximate values and their bin bounds. For example, a true factor 3 may print
+approximately 2.992776, with bounds [2.982699, 3.002888]. Percentiles falling below 1e-6 or above
+1e6 are unavailable, with underflow/overflow counts reported. These are bin ranges, not CIs.
+
+CIs cover **closure sampling conditional on fixed origins, probabilities and the time model**.
+They exclude origin-selection, speed/model and hazard-calibration uncertainty. Normal intervals
+can have zero observed width when every sampled score agrees, despite an unobserved rare failure.
+Ticket 09's mutual-pair network score and this directed time score measure different properties;
+their Monte Carlo samples also differ. Interpret each using its own definition and interval.
+
+Outputs are `summary.json.travel_time`, the report section, sampled-node `p_tt_ok` and
+`p_tt_ok_ci_low/high` in `network.gpkg`, and time fields in the existing OD CSV when computed.
+Skipped/disabled stages leave node fields null and omit time fields from the OD CSV; overwrite
+clears previously computed time results. No new figure is specified by this ticket; use QGIS
+to style sampled-node values.
+
+Intact travel times are calculated once and shared through a temporary disk-backed baseline,
+then removed at completion. Damaged paths are processed in bounded origin chunks. Fixed indexed
+batches make results independent of worker count and chunk size; increasing samples preserves
+the closure prefix. The memory estimate covers working arrays, excluding interpreter/process
+overhead and OS file-cache behavior. Baseline disk use is reported separately. No per-sample
+distance matrices or individual travel-time-ratio histories are retained.
+
+### Run and manually verify Ticket 10
+
+From the repository root with your environment activated:
+
+```sh
+python examples/create_ticket10_demo.py
+georesilience run --config data/ticket10-demo/tight.yaml --overwrite
+georesilience run --config data/ticket10-demo/boundary.yaml --overwrite
+georesilience run --config data/ticket10-demo/relaxed.yaml --overwrite
+georesilience run --config data/ticket10-demo/skip.yaml --overwrite
+georesilience run --config data/ticket10-demo/speed-table.yaml --overwrite
+georesilience run --config data/ticket10-demo/attribute.yaml --overwrite
+georesilience run --config data/ticket10-demo/sparse.yaml --overwrite
+PYTHONPATH= PYTEST_DISABLE_PLUGIN_AUTOLOAD=1 python -m pytest -q tests/test_travel_time.py
+```
+
+Inspect **Travel-time reliability** near the end of each `results/ticket10-*/report.txt`, then
+`od_reliability.csv` and the node fields in `network.gpkg`. Small-case exact expectations are in
+`data/ticket10-demo/expected.json`. Defaults use seed 42 and 1,000 time samples:
+
+| Example | Check | Default result |
+| --- | --- | --- |
+| Tight | Fast route takes 1 minute, always-available alternative 3; tau=0.5 | 0.505, exact 0.5 |
+| Boundary | tau=2 accepts the 3-minute alternative at equality | 1.0, exact 1 |
+| Relaxed | tau=2.5 also accepts the alternative | 1.0, exact 1 |
+| Skip | No speeds/table | `skipped: no speed data` |
+| Speed table | Missing speeds filled with residential=30 km/h | Baseline 2 minutes; reliability 0.505 |
+| Attribute | Supplied times include signal delays, without speed tags | Baseline 1.25 minutes; reliability 0.505 |
+| Sparse | Two grids joined by a vulnerable road; tau=0.25 | About 0.824866; no exact large-graph reference |
+
+The sparse example has **200 nodes / 361 physical roads**, internal failure probability 0.08 and
+joining-road probability 0.30. It produces both route failures and delays: across-bridge OD
+success is **0.704**, nearby OD **0.928**. Only 24 sampled nodes have `p_tt_ok` values; two extra
+OD origins are routed. All small-case same-node OD probabilities are exactly one.
+
+Input copies for QGIS are `data/ticket10-demo/*-input.gpkg`. All examples keep earlier work small
+and disable figures. The generator accepts `--nodes` (even, at least 20), `--samples`, `--seed`
+and `--out`. Generated data/results are ignored; generator and tests are tracked. Try copied
+configs with different `tau` values and output directories: with fixed inputs and seed,
+reliability must stay constant or increase as the tolerance increases. For further validation,
+see [plan/TEST_RECOMMENDATIONS.md](plan/TEST_RECOMMENDATIONS.md#10--travel-time-reliability).
