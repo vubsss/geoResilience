@@ -274,14 +274,22 @@ when portions lie in other zones. Both generated maps were visually inspected.
   inspect boundary assignments and partial-study coverage in QGIS, and record runtime/memory.
   The synthetic checks do not establish city-scale performance or actual ward population accuracy.
 
-## 14 — Scorecard and report (prospective)
+## 14 — Scorecard and report
 
-- [ ] Cross-check headline/table values against JSON, CSV and GeoPackage with explicit rounding
+- [x] Cross-check headline/table values against JSON, CSV and GeoPackage with explicit rounding
   tolerances. Verify correct units and definitions, especially mutual pairs versus directed trips.
-- [ ] Exercise disabled, missing, inconclusive and constant-score cases; preserve reasons and
+- [x] Exercise disabled, missing, inconclusive and constant-score cases; preserve reasons and
   uncertainty limits. Verify no default composite appears and unavailable metrics cannot be weighted.
 - [ ] Review maps and long-name/non-ASCII inputs manually as well as checking report order/width;
   verify coordinates, legends, scale bars and labels convey the computed quantity correctly.
+
+Implemented on 13 October 2026. Evidence: `tests/test_scorecard.py` and
+`examples/create_ticket14_demo.py`, with independent exported-layer/coordinate/weight checks in
+`results/ticket14-demo/verification.json`. All report-order/ASCII/100-column checks passed, including long Unicode street names and
+embedded newlines. Full offline regression: 341 passed, 5 skipped; final focused checks: 42 passed.
+Generated scorecards and maps are visually inspected during implementation; broader user/manual
+review of long-name/non-ASCII locator rows remains a follow-up. Literature sources and
+normalisations are distinguished, and no composite uncertainty is invented.
 
 ## 15 — Crucitti comparison
 

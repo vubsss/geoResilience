@@ -1,6 +1,5 @@
 import json
 import platform
-import textwrap
 from collections import Counter
 from datetime import datetime, timezone
 from importlib.metadata import PackageNotFoundError, version
@@ -14,23 +13,25 @@ from shapely import wkt
 
 from . import __version__
 from .config import RunConfig
-from .centralities import centrality_report, compute_centralities
-from .classification import classify_network, classification_report, write_classification_figures
-from .connectivity import compute_connectivity, connectivity_report, load_od_pairs, write_od_reliability
-from .criticality import compute_criticality, criticality_report
+from .centralities import compute_centralities
+from .classification import classify_network, write_classification_figures
+from .connectivity import compute_connectivity, load_od_pairs, write_od_reliability
+from .criticality import compute_criticality
 from .figures import (FIGURE_FILENAMES, POPULATION_FIGURES, write_connectivity_figure, write_figures,
                       write_robustness_figures, write_accessibility_figures, write_population_figure,
-                      write_zones_figure)
-from .failure_probabilities import compute_failure_probabilities, failure_probabilities_report
+                      write_zones_figure, write_scorecard_figure)
+from .failure_probabilities import compute_failure_probabilities
 from .links import _link_rows
-from .network import cleaning_report, load_and_clean
-from .screening import redundancy_report, screen_network
-from .robustness import compute_robustness, robustness_report, write_curves
+from .network import load_and_clean
+from .screening import screen_network
+from .robustness import compute_robustness, write_curves
 from .time_models import prepare_time_model
-from .travel_time import compute_travel_time, travel_time_report
-from .accessibility import compute_accessibility, accessibility_report
-from .population import prepare_population, population_report
-from .zones import ZONE_FIGURES, aggregate_zones, load_zones, zones_report
+from .travel_time import compute_travel_time
+from .accessibility import compute_accessibility
+from .population import prepare_population
+from .zones import ZONE_FIGURES, aggregate_zones, load_zones
+from .scorecard import build_scorecard
+from .reporting import build_locator_tables, build_report, collect_coverage_warnings
 
 
 def _versions():
@@ -178,12 +179,6 @@ def run(config: RunConfig, out_override: Path | None = None, overwrite: bool = F
     zone_result = aggregate_zones(zones, nodes_gdf, links_gdf) if zones is not None else None
     if zone_result is not None:
         nodes_gdf, links_gdf = zone_result.nodes, zone_result.links
-        zone_result.zones.to_file(
-            out_dir / "zones.gpkg", layer="zones", driver="GPKG", engine="pyogrio")
-    nodes_gdf.to_file(
-        out_dir / "network.gpkg", layer="nodes", driver="GPKG", engine="pyogrio")
-    links_gdf.to_file(
-        out_dir / "network.gpkg", layer="edges", driver="GPKG", engine="pyogrio", mode="a")
 
     histogram = dict(sorted(Counter(degree.values()).items()))
     summary = {
@@ -206,43 +201,33 @@ def run(config: RunConfig, out_override: Path | None = None, overwrite: bool = F
         summary["population"] = population.summary
     if zone_result is not None:
         summary["zones"] = zone_result.summary
-    (out_dir / "summary.json").write_text(json.dumps(summary, indent=2) + "\n")
-    lines = [f"GeoResilience {__version__}", f"Input: {summary['meta']['input']}",
-             f"UTC: {summary['meta']['timestamp_utc']}", "", "Network",
-             f"Nodes: {len(graph)}", f"Links: {len(links)}",
-             f"Directed edges: {graph.number_of_edges()}",
-             f"Network type requested: {config.network.type}",
-             f"Network type applied: {summary['meta']['network_type_applied']}",
-             "", *cleaning_report(cleaning), "", "Degree", "degree: count"]
-    lines.extend(f"{key}: {value}" for key, value in histogram.items())
-    lines.extend(["", *centrality_report(statistics, links)])
-    if population is not None:
-        lines.extend(["", *population_report(population.summary)])
-    lines.extend(["", *redundancy_report(screening.summary, links)])
-    lines.extend(["", *criticality_report(criticality.summary, criticality.information_summary)])
-    lines.extend(["", *robustness_report(robustness.summary)])
-    lines.extend(["", *classification_report(classification.summary)])
-    lines.extend(["", *failure_probabilities_report(failure_probabilities.summary)])
-    lines.extend(["", *connectivity_report(connectivity.summary)])
-    lines.extend(["", *travel_time_report(travel_time.summary)])
-    lines.extend(["", *accessibility_report(accessibility.summary)])
+    summary["scorecard"] = build_scorecard(summary, config.composite)
+    if "composite" in summary["scorecard"]:
+        summary["composite_user_weighted"] = summary["scorecard"]["composite"]["value"]
+    summary["critical_tables"] = build_locator_tables(nodes_gdf, links_gdf, population is not None)
+    summary["coverage_warnings"] = collect_coverage_warnings(summary)
     if zone_result is not None:
-        lines.extend(["", *zones_report(zone_result.summary)])
-    lines = [line.encode("ascii", "backslashreplace").decode() for line in lines]
-    lines = [textwrap.fill(line, width=100) if len(line) > 100 else line for line in lines]
-    (out_dir / "report.txt").write_text("\n".join(lines) + "\n")
+        zone_result.zones.to_file(
+            out_dir / "zones.gpkg", layer="zones", driver="GPKG", engine="pyogrio")
+    nodes_gdf.to_file(
+        out_dir / "network.gpkg", layer="nodes", driver="GPKG", engine="pyogrio")
+    links_gdf.to_file(
+        out_dir / "network.gpkg", layer="edges", driver="GPKG", engine="pyogrio", mode="a")
+    (out_dir / "summary.json").write_text(json.dumps(summary, indent=2) + "\n")
+    (out_dir / "report.txt").write_text(build_report(summary, config, links, out_dir.name))
     resolved = _resolved_config(config, out_dir, computation, time_model is not None)
     if population is not None:
         resolved["population_provenance"] = population.provenance
     (out_dir / "run_config.yaml").write_text(yaml.safe_dump(resolved, sort_keys=False))
     if config.output.figures:
-        write_figures(nodes_gdf, links_gdf, out_dir / "figures")
+        write_scorecard_figure(summary["scorecard"], out_dir / "figures", run_name=out_dir.name)
+        write_figures(nodes_gdf, links_gdf, out_dir / "figures", run_name=out_dir.name)
         write_robustness_figures(robustness, out_dir / "figures")
         write_classification_figures(classification, out_dir / "figures")
-        write_connectivity_figure(nodes_gdf, links_gdf, out_dir / "figures")
-        write_accessibility_figures(nodes_gdf, links_gdf, out_dir / "figures")
+        write_connectivity_figure(nodes_gdf, links_gdf, out_dir / "figures", run_name=out_dir.name)
+        write_accessibility_figures(nodes_gdf, links_gdf, out_dir / "figures", run_name=out_dir.name)
         if population is not None:
-            write_population_figure(nodes_gdf, links_gdf, out_dir / "figures")
+            write_population_figure(nodes_gdf, links_gdf, out_dir / "figures", run_name=out_dir.name)
         if zone_result is not None:
-            write_zones_figure(zone_result.zones, links_gdf, out_dir / "figures")
+            write_zones_figure(zone_result.zones, links_gdf, out_dir / "figures", run_name=out_dir.name)
     return summary

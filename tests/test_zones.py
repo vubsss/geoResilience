@@ -260,6 +260,7 @@ def test_pipeline_exports_reprojection_invariance_resolved_config_and_cleanup(tm
     for summary in (baseline, after):
         summary['meta'].pop('timestamp_utc')
         summary['metrics'].pop('runtime_seconds')
+        summary.pop('coverage_warnings')  # Zone context changes, while network analysis does not.
     zones_summary = after.pop('zones')
     assert after == baseline
     out = config.output.dir

@@ -5,8 +5,8 @@ cleaning, physical road links, exact centralities, redundancy screening, single-
 information centrality, cumulative attack/failure experiments, distribution classification,
 per-event road failure probabilities, Monte Carlo connectivity and travel-time reliability,
 distance-decayed Hansen accessibility and auditable outputs. Ticket 12 adds optional population
-weighting; Ticket 13 adds optional zone aggregation. Ticket 15 adds a four-city
-qualitative comparison with AP2, including
+weighting; Ticket 13 adds optional zone aggregation, and Ticket 14 adds the scorecard and final
+report. Ticket 15 adds a four-city qualitative comparison with AP2, including
 an explicit reference using the paper's spatial efficiency. Later analysis tickets are
 tracked in [TICKET_UPDATES.md](TICKET_UPDATES.md).
 
@@ -2209,3 +2209,122 @@ For manual review, open both `zones.gpkg` files and `network.gpkg` in QGIS. Comp
 assignments, inspect the empty zone's null rank, check population and road totals against
 `data/ticket13-demo/manifest.json`, and review the report tables and choropleths. These are
 software examples, not actual Hyderabad wards, observed closure probabilities or census data.
+
+
+## Scorecard and final report (Ticket 14)
+
+Every run writes `summary.json.scorecard` and starts the report with headline results, meanings,
+source-paper references and units. Six project normalisations support an optional composite:
+
+| Composite key | Raw headline | Score |
+| --- | --- | --- |
+| `robustness_attack` | Link attack largest-SCC AUC | AUC |
+| `robustness_failure` | Link random-failure largest-SCC AUC | AUC |
+| `redundancy_bridges` | Undirected physical bridge count fraction | 1 - bridge fraction |
+| `redundancy_detour` | Median finite directed endpoint detour ratio | 1 / median |
+| `reliability` | Expected mutually connected distinct-pair fraction | Fraction |
+| `accessibility` | Mean defined single-link node Hansen loss | 1 - mean loss |
+
+The link AUC is averaged over the configured removal range, with the existing integer-removal
+and final-plateau convention. It is **not** the largest component remaining at 20% removal.
+Bridge fraction uses non-loop physical-road counts. Detour median excludes roads with no finite
+alternative; the report gives those counts separately. Its inverse can exceed one when a
+shorter alternative exists; values are not silently clipped to disguise that fact.
+
+With population enabled, `reliability` selects `conn_reliability_pop` and `accessibility` selects
+mean `vuln_pop`, and the report/JSON show the structural counterparts too. Population pair
+connectivity weights pairs by population products; it is not a percentage of persons. A separate,
+unscored headline gives expected allocated population retained in the largest **node-count** SCC,
+computed as `1 - expected_pop_cut_off / allocated`. Destination-weighted `vuln_pop` still averages
+origins uniformly, unlike Ticket 13's resident-weighted structural zone mean. A missing weighted
+variant remains unavailable; it never silently falls back to the structural value.
+
+The accessibility row also gives structural/population p90 losses and undefined-origin coverage.
+Network class, basis and inconclusive-fit reason are shown without a numerical score. Travel-time
+threshold reliability is a separate unscored headline; disabled/no-speed cases retain their reason.
+Means over defined origins do not establish vulnerability for undefined ones. Connectivity and
+travel-time intervals retain the existing sampling definitions; constant observed scores can
+still miss rare failures.
+
+There are **no default composite weights**. To request a composite, choose your own weights:
+
+```yaml
+composite:
+  weights:
+    robustness_attack: 3
+    robustness_failure: 1
+    redundancy_bridges: 1
+    redundancy_detour: 1
+    reliability: 2
+    accessibility: 2
+```
+
+Only the six keys above are accepted. Weights must be finite, nonnegative, with at least one
+positive value. They are normalized to sum to one, including safe normalization of very large
+finite weights. Every named metric must be available, even if its supplied weight is zero.
+Unknown keys and unavailable scores raise an actionable error. The resolved YAML keeps the
+original supplied weights. `summary.json.composite_user_weighted` is the weighted mean;
+`scorecard.composite` records supplied/normalized weights, constituent scores, basis and the label
+**user-weighted composite -- weights chosen by the user, not part of the method**. Both composite
+keys are absent when weights are null. No composite confidence interval is inferred.
+
+The source papers motivate the dimensions, rather than defining this project's normalisations
+or weights: [Albert, Jeong and Barabasi (2000)](papers/AP1-error_and_attack_tolerance_of_complex_networks.pdf),
+[Crucitti, Latora and Porta (2006)](papers/AP2-centrality_measures_in_urban_networks.pdf), and
+[Taylor, Sekhar and D'Este (2006)](papers/AP3-vulnerability_analysis.pdf).
+They examine different quantities; choosing metrics and weights can change rankings. The report's
+method notes explicitly distinguish the plan's exponential Hansen measure from AP3's inverse-cost
+expression, and framework inverse-distance efficiency from AP2's spatial efficiency.
+
+The final ASCII report stays within 100 columns and follows this order:
+
+1. Run metadata, scorecard, collected data/coverage warnings.
+2. Cleaning (including degree), Centralities, Network class, Redundancy, Critical links, Robustness,
+   Failure probabilities, Connectivity reliability, Travel-time reliability, Accessibility,
+   Population, Zones.
+3. Method notes and limitations: boundary/component effects, directedness, conditional sampling
+   uncertainty, per-event failure probability, proxies/independence, WorldPop estimates and zones.
+
+The warning collection includes proxy length share (including partial mixed coverage), unallocated
+population, discarded components, information/candidate coverage, undefined accessibility nodes,
+missing stages, constant-score interval limitations and existing stage warnings. Machine-readable
+copies are in `summary.json.coverage_warnings`.
+
+Critical-link and vulnerable-node locator tables include IDs, street names, highway classes,
+first OSM way ID and WGS84 latitude/longitude. Link locations are actual geometry midpoints.
+Node names/classes combine incident physical-road attributes; the node's first way ID is the
+smallest incident ID. Tables select `eff_drop_pop`/`vuln_pop` when population is enabled and show
+the structural values for the same features. Their reporting ranks are separate from unchanged
+analysis ranks. Missing evaluations yield empty tables with an explanation. Unrounded locator
+values and coordinates are in `summary.json.critical_tables`; report coordinates round to seven
+decimal places.
+
+All main-run maps share a light-grey base, fixed equal-aspect extent, a projected-metre scale bar,
+grid-north arrow and metric/run title. Magnitudes use sequential colours; top-ranked critical
+roads use red highlights. These centrality/accessibility maps retain structural source fields
+and identify them in their titles; the locator tables state their separate reporting basis.
+Zone ranks keep red for most vulnerable and grey for undefined.
+`figures/scorecard.png` displays the six selected scores, marks structural counterparts for weighted
+rows, labels missing metrics and adds a composite bar only when configured. With figures disabled,
+no new figures are written; overwrite removes stale scorecards and optional maps.
+
+Run the controlled examples from the repository root:
+
+```sh
+python examples/create_ticket14_demo.py
+python -m pytest -q tests/test_scorecard.py
+georesilience run --config data/ticket14-demo/uniform.yaml --out results/ticket14-cli --overwrite
+```
+
+Outputs in `results/ticket14-demo/` include structural, population, population/user-weighted and
+missing-metric cases. The last case disables link robustness, makes all node accessibility losses
+undefined with a tiny radius and exercises the no-speed-data skip. `verification.json` independently
+cross-checks scores against layers/source summaries, the supplied-weight mean, locator coordinates,
+report order and width. Population runs substitute only bbox acquisition with the frozen nine-node
+grid. Their bbox YAML downloads actual roads if invoked directly; repeat those controlled cases
+with the demo script. The structural GraphML config runs offline through the CLI.
+
+For manual review, start with `user-weighted/report.txt` and `figures/scorecard.png`, compare the
+normalized weights with `verification.json`, then inspect the locator coordinates and shared map
+style. Review `missing-metrics/report.txt` to see explicit unavailable values and reasons. These
+examples verify software reporting, not a calibrated hazard model or a universal city ranking.

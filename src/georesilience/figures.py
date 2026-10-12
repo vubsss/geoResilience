@@ -1,19 +1,66 @@
 """Exported figures for degree, centralities, redundancy, and road criticality."""
 
+import textwrap
+
 import numpy as np
 
 from .classification import CLASSIFICATION_FIGURES
+from .cartography import finish_map, map_canvas
 
 NODE_MEASURES = ("closeness", "straightness", "betweenness")
 FIGURE_FILENAMES = ("degree_hist.png", *(f"{name}_ccdf.png" for name in NODE_MEASURES),
                     "edge_betweenness_map.png", "redundancy_map.png", "critical_links_map.png",
                     "robustness_scc.png", "robustness_efficiency.png", "connectivity_nodes_map.png",
                     "hansen_a_map.png", "vuln_map.png", "access_drop_map.png",
-                    *CLASSIFICATION_FIGURES)
+                    "scorecard.png", *CLASSIFICATION_FIGURES)
 POPULATION_FIGURES = ("population_map.png",)
 
 
-def write_zones_figure(zones, links, folder):
+def write_scorecard_figure(scorecard, folder, *, run_name=None):
+    import matplotlib.pyplot as plt
+    from matplotlib.lines import Line2D
+
+    folder.mkdir(parents=True, exist_ok=True)
+    rows = [row for row in scorecard["rows"] if row["key"] in scorecard["normalised_scores"]]
+    if "composite" in scorecard:
+        rows.append({"label": "User-weighted composite", "normalised_score": scorecard["composite"]["value"]})
+    fig, ax = plt.subplots(figsize=(10, .6*len(rows)+2))
+    values = [row["normalised_score"] for row in rows]
+    maximum = max([1.] + [value for value in values if value is not None])
+    for index, (row, value) in enumerate(zip(rows, values)):
+        uniform = row.get("uniform_normalised_score") if row.get("basis") == "population" else None
+        if value is not None:
+            ax.barh(index, value, color="tab:blue", height=.55)
+            ax.text(max(value, uniform or 0)+.015*maximum, index, f"{value:.4g}", va="center", fontsize=9)
+        else:
+            ax.text(.02*maximum, index, "not computed", va="center", color="grey", fontsize=9)
+        if uniform is not None:
+            ax.plot(uniform, index, "|", color="black", markersize=17, markeredgewidth=2)
+    labels = {"robustness_attack": "Link attack robustness (AUC)", "robustness_failure": "Link failure robustness (AUC)",
+              "redundancy_bridges": "Bridge redundancy (1 - bridge share)", "redundancy_detour": "Detour redundancy (1 / median)",
+              "reliability": "Mutual-pair connectivity reliability", "accessibility": "Accessibility retained (1 - mean loss)"}
+    ax.set_yticks(range(len(rows)), [labels.get(row.get("key"), row["label"]) for row in rows])
+    ax.invert_yaxis()
+    ax.set_xlim(0, maximum*1.15)
+    ax.set_xlabel("Project-normalised score (1 = resilient under each metric)")
+    name = str(run_name or "network run").encode("ascii", "backslashreplace").decode()
+    ax.set_title("Resilience scorecard\n" + textwrap.fill(" ".join(name.split()), 64))
+    if scorecard["population_present"]:
+        ax.legend(handles=[Line2D([0], [0], color="tab:blue", linewidth=8, label="Selected score (population where defined)"),
+                           Line2D([0], [0], color="black", marker="|", linestyle="none", markersize=14, label="Structural counterpart")],
+                  loc="upper center", bbox_to_anchor=(.5, -.18), fontsize=8)
+    caption = "Normalisations are project choices; read definitions and coverage in report.txt."
+    if "composite" in scorecard:
+        caption += "\nComposite weights chosen by the user, not part of the method."
+    fig.text(.5, -.02, caption, ha="center", fontsize=8)
+    ax.grid(axis="x", alpha=.2)
+    ax.set_axisbelow(True)
+    fig.tight_layout()
+    fig.savefig(folder / "scorecard.png", bbox_inches="tight", dpi=180, facecolor="white")
+    plt.close(fig)
+
+
+def write_zones_figure(zones, links, folder, *, run_name=None):
     import matplotlib.pyplot as plt
     from matplotlib.patches import Patch
 
@@ -34,30 +81,15 @@ def write_zones_figure(zones, links, folder):
         ax.legend(handles=[Patch(facecolor="lightgrey", label="Vulnerability undefined")], loc="lower right")
     if finite.empty:
         ax.text(.5, .98, "No defined zone vulnerability", ha="center", va="top", transform=ax.transAxes)
-    ax.set_title("Zone vulnerability: aggregation of network results")
-    ax.set_aspect("equal")
-    ax.set_axis_off()
-    fig.savefig(folder / "zones_vulnerability_map.png", bbox_inches="tight", dpi=180)
-    plt.close(fig)
+    finish_map(fig, ax, zones, "Zone vulnerability: aggregation of network results",
+               folder / "zones_vulnerability_map.png", run_name)
 
 
-def _critical_map_canvas(links):
-    import matplotlib.pyplot as plt
-
-    xmin, ymin, xmax, ymax = links.total_bounds
-    width, height = max(xmax - xmin, 1), max(ymax - ymin, 1)
-    size = ((8, max(2.5, 8 * height / width)) if width >= height
-            else (max(2.5, 8 * width / height), 8))
-    fig, ax = plt.subplots(figsize=size)
-    # Automatic limits on a zero-height/width network at large UTM coordinates
-    # can pad by kilometres and make the roads invisible.
-    padding = max(width, height) * 0.08
-    ax.set_xlim(xmin - padding, xmax + padding)
-    ax.set_ylim(ymin - padding, ymax + padding)
-    return fig, ax
+def _critical_map_canvas(frame):
+    return map_canvas(frame)
 
 
-def write_figures(nodes, links, folder):
+def write_figures(nodes, links, folder, *, run_name=None):
     import matplotlib.pyplot as plt
 
     folder.mkdir(exist_ok=True)
@@ -84,7 +116,7 @@ def write_figures(nodes, links, folder):
         fig.savefig(folder / f"{name}_ccdf.png", bbox_inches="tight", dpi=180)
         plt.close(fig)
 
-    fig, ax = plt.subplots(figsize=(8, 8))
+    fig, ax = _critical_map_canvas(links if not links.empty else nodes)
     links.plot(ax=ax, color="lightgrey", linewidth=0.6)
     active = links[np.isfinite(links.edge_betweenness)].copy()
     if not active.empty:
@@ -93,38 +125,28 @@ def write_figures(nodes, links, folder):
         active.plot(ax=ax, column="edge_betweenness", cmap="viridis", linewidth=widths,
                     vmin=0, vmax=float(values.max()) if values.max() > 0 else 1,
                     legend=True, legend_kwds={"label": "Edge betweenness", "shrink": 0.65})
-    ax.set_title("Physical links by edge betweenness")
-    ax.set_axis_off()
-    fig.savefig(folder / "edge_betweenness_map.png", bbox_inches="tight", dpi=180)
-    plt.close(fig)
+    finish_map(fig, ax, nodes, "Physical links by edge betweenness", folder / "edge_betweenness_map.png", run_name)
 
     from matplotlib.lines import Line2D
 
-    fig, ax = plt.subplots(figsize=(8, 8))
-    links.plot(ax=ax, color="grey", linewidth=0.8)
+    fig, ax = _critical_map_canvas(links if not links.empty else nodes)
+    links.plot(ax=ax, color="lightgrey", linewidth=0.8)
     for column, color in (("is_bridge", "red"), ("is_directed_bridge", "orange")):
         selected = links[links[column]]
         if not selected.empty:
             selected.plot(ax=ax, color=color, linewidth=1.8)
     ax.legend(handles=[Line2D([0], [0], color=color, label=label, linewidth=2)
                        for color, label in (("red", "Bridge"), ("orange", "Directed bridge"),
-                                            ("grey", "Other link"))])
-    ax.set_title("Physical links by redundancy")
-    ax.set_axis_off()
-    fig.savefig(folder / "redundancy_map.png", bbox_inches="tight", dpi=180)
-    plt.close(fig)
+                                            ("lightgrey", "Other link"))])
+    finish_map(fig, ax, nodes, "Physical links by redundancy", folder / "redundancy_map.png", run_name)
 
-    fig, ax = _critical_map_canvas(links)
+    fig, ax = _critical_map_canvas(links if not links.empty else nodes)
     links.plot(ax=ax, color="lightgrey", linewidth=0.7)
     critical = links[links.crit_rank.notna() & (links.crit_rank <= 50)].copy()
     if not critical.empty:
-        critical.plot(ax=ax, column="eff_drop", cmap="YlOrRd", linewidth=2,
-                      vmin=0, vmax=max(float(critical.eff_drop.max()), 1e-12),
-                      legend=True, legend_kwds={"label": "Relative efficiency drop", "shrink": 0.65})
-    ax.set_title(f"Top {len(critical)} critical physical links")
-    ax.set_axis_off()
-    fig.savefig(folder / "critical_links_map.png", bbox_inches="tight", dpi=180)
-    plt.close(fig)
+        critical.plot(ax=ax, color="tab:red", linewidth=2, label="Top evaluated efficiency losses")
+        ax.legend(loc="lower right", fontsize=8)
+    finish_map(fig, ax, nodes, f"Top {len(critical)} structural efficiency-critical links", folder / "critical_links_map.png", run_name)
 
 
 def write_robustness_figures(result, folder):
@@ -159,42 +181,36 @@ def write_robustness_figures(result, folder):
         plt.close(fig)
 
 
-def write_connectivity_figure(nodes, links, folder):
+def write_connectivity_figure(nodes, links, folder, *, run_name=None):
     import matplotlib.pyplot as plt
 
     folder.mkdir(exist_ok=True)
-    fig, ax = _critical_map_canvas(links)
+    fig, ax = _critical_map_canvas(links if not links.empty else nodes)
     links.plot(ax=ax, color="lightgrey", linewidth=0.6)
     nodes.plot(ax=ax, column="p_connected", cmap="viridis", vmin=0, vmax=1, markersize=18,
                legend=True, legend_kwds={"label": "P(node in main SCC)", "shrink": .65})
-    ax.set_title("Main-component membership probability")
-    ax.set_axis_off()
-    fig.savefig(folder / "connectivity_nodes_map.png", bbox_inches="tight", dpi=180)
-    plt.close(fig)
+    finish_map(fig, ax, nodes, "Main-component membership probability", folder / "connectivity_nodes_map.png", run_name)
 
 
-def write_population_figure(nodes, links, folder):
+def write_population_figure(nodes, links, folder, *, run_name=None):
     import matplotlib.pyplot as plt
 
     folder.mkdir(exist_ok=True)
-    fig, ax = _critical_map_canvas(links)
+    fig, ax = _critical_map_canvas(links if not links.empty else nodes)
     links.plot(ax=ax, color="lightgrey", linewidth=.7)
     nodes.plot(ax=ax, column="population", cmap="viridis", vmin=0,
                vmax=max(float(nodes.population.max()), 1e-12), markersize=25,
                legend=True, legend_kwds={"label": "Allocated population per node", "shrink": .65})
-    ax.set_title("WorldPop population assigned to analysis nodes")
-    ax.set_axis_off()
-    fig.savefig(folder / "population_map.png", bbox_inches="tight", dpi=180)
-    plt.close(fig)
+    finish_map(fig, ax, nodes, "WorldPop population assigned to analysis nodes", folder / "population_map.png", run_name)
 
 
-def write_accessibility_figures(nodes, links, folder):
+def write_accessibility_figures(nodes, links, folder, *, run_name=None):
     import matplotlib.pyplot as plt
 
     folder.mkdir(exist_ok=True)
     for name, title, label in (("hansen_a", "Hansen structural accessibility", "Accessibility A"),
-                                ("vuln", "Node vulnerability to evaluated single-link closures", "Relative accessibility drop")):
-        fig, ax = _critical_map_canvas(links)
+                                ("vuln", "Structural node vulnerability to evaluated single-link closures", "Relative accessibility drop")):
+        fig, ax = _critical_map_canvas(links if not links.empty else nodes)
         links.plot(ax=ax, color="lightgrey", linewidth=.7)
         finite = nodes[np.isfinite(nodes[name])]
         missing = nodes[~np.isfinite(nodes[name])]
@@ -205,18 +221,11 @@ def write_accessibility_figures(nodes, links, folder):
         if not missing.empty:
             missing.plot(ax=ax, color="grey", marker="x", markersize=25, label="Undefined")
             ax.legend()
-        ax.set_title(title)
-        ax.set_axis_off()
-        fig.savefig(folder / f"{name}_map.png", bbox_inches="tight", dpi=180)
-        plt.close(fig)
-    fig, ax = _critical_map_canvas(links)
+        finish_map(fig, ax, nodes, title, folder / f"{name}_map.png", run_name)
+    fig, ax = _critical_map_canvas(links if not links.empty else nodes)
     links.plot(ax=ax, color="lightgrey", linewidth=.7)
     selected = links[links.access_rank.notna() & (links.access_rank <= 50)]
     if not selected.empty:
-        selected.plot(ax=ax, column="access_drop", cmap="YlOrRd", linewidth=2,
-                      vmin=0, vmax=max(float(selected.access_drop.max()), 1e-12),
-                      legend=True, legend_kwds={"label": "Relative total accessibility drop", "shrink": .65})
-    ax.set_title(f"Top {len(selected)} links by accessibility drop")
-    ax.set_axis_off()
-    fig.savefig(folder / "access_drop_map.png", bbox_inches="tight", dpi=180)
-    plt.close(fig)
+        selected.plot(ax=ax, color="tab:red", linewidth=2, label="Top evaluated accessibility losses")
+        ax.legend(loc="lower right", fontsize=8)
+    finish_map(fig, ax, nodes, f"Top {len(selected)} structural accessibility-critical links", folder / "access_drop_map.png", run_name)

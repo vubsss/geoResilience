@@ -13,7 +13,7 @@
 - [x] **11 — Hansen accessibility (uniform masses)** — completed, tested and manually verified by you on 12 October 2026, using the plan's exponential distance-decay definition.
 - [x] **12 — WorldPop population** — completed, tested and accepted by you after manual review on 13 October 2026. Includes real Malé roads/WorldPop and 100 m/500 m snap comparison. Full offline suite: 300 passed, 5 skipped.
 - [x] **13 — Zone aggregation** — implemented and automatically verified on 13 October 2026; manual review pending. Includes deterministic spatial assignment, population aggregates, zone exports/report/map and offline demos.
-- [ ] **14 — Scorecard and final report** — not started.
+- [x] **14 — Scorecard and final report** — implemented and automatically verified on 13 October 2026; full offline suite: 341 passed, 5 skipped; manual review pending.
 - [ ] **15 — Crucitti comparison** — implemented, tested and manually reviewed, including modern OSM sensitivity/inspection and the authors' published historical graphs. Historical data: 2/4 information and 3/4 betweenness matches under both conventions; MISMATCH. Planned-city classification discrepancy remains open.
 - [ ] **16 — Ada runbook** — not started.
 
@@ -2173,7 +2173,7 @@ documentation update.
 ## Current Ticket 13 — Zone aggregation
 
 Implemented on **13 October 2026** within the mid-evaluation scope. Automatic checks are
-complete for Ticket 13; **manual review has not yet been recorded**. Ticket 14 remains not started.
+complete for Ticket 13; **manual review has not yet been recorded**. Ticket 14 was outside that implementation.
 
 ### Implementation
 
@@ -2229,3 +2229,77 @@ For manual review, use README's Ticket 13 instructions and inspect both demo Geo
 report tables and maps. These synthetic examples establish software behavior, not actual ward
 population accuracy or observed hazard vulnerability. Larger real-ward performance remains an
 optional follow-up; no claim of city-scale performance is made.
+
+
+## Current Ticket 14 — Scorecard and final report
+
+Implemented on **13 October 2026**, following the requested Ticket 13 commit
+`213acb5` (`ticket 13 completed`). That commit uses the existing configured Arpit identity
+as author and committer, without a co-author trailer. Ticket 14 changes remain available
+for review in the working tree; manual review has not yet been recorded.
+
+### Implementation
+
+- Every run builds a scorecard from existing finished results. Six explicitly defined
+  normalisations cover link attack/failure SCC AUC, bridge fraction, finite detour median,
+  mutual-pair connectivity and mean single-link accessibility loss. AUC is not the final-step
+  fraction. Undefined metrics remain null with reasons; finite detour alternatives exclude
+  no-alternative roads and inverse ratios are not silently capped at one.
+- Population runs show/select existing destination-weighted accessibility and population-product
+  pair connectivity alongside structural values. Main-SCC allocated population retention is a
+  separate unscored headline. Network class/basis and travel-time status are shown separately.
+  Sources, units, p90 losses, coverage and existing interval definitions remain explicit.
+- Added strict optional `composite.weights`, with exactly the six specified keys, finite
+  nonnegative weights and at least one positive value. Stable normalization handles very large
+  weights. Every named score must be computed, including zero-weight entries. There is no
+  default composite or fallback to structural metrics when a weighted result is unavailable.
+  Configured results disclose supplied/normalized weights and constituent scores under the
+  required user-weighted label; no composite uncertainty interval is invented.
+- Final report order is header, Scorecard, Data and coverage warnings, Cleaning, Centralities,
+  Network class, Redundancy, Critical links, Robustness, Failure probabilities, Connectivity,
+  Travel time, Accessibility, Population, Zones, Method notes. It retains original sections,
+  uses ASCII escaping and wraps at 100 columns. Warnings from all stages, proxy/mixed coverage,
+  unallocated population, discarded components and candidate/undefined coverage are collected.
+- Added top-20 locator tables with names, highway, first way ID and WGS84 coordinates.
+  Roads use geometry half-length points; nodes combine incident road attributes. Population
+  reporting uses `eff_drop_pop`/`vuln_pop` and discloses the structural counterparts. These
+  reporting ranks do not mutate existing analysis ranks or layer metrics.
+- Added `scorecard.png` and shared equal-aspect map styling with a light-grey base, grid-north
+  arrow, projected-metre scale bar, metric/run title, sequential magnitudes and red top-road
+  highlights. Existing structural map fields are identified in titles. Overwrite clears stale
+  scorecard/optional maps when figures are disabled.
+
+### Validation and review
+
+- Focused suite: **42 passed** (`test_scorecard.py`, `test_zones.py`, `test_tracer_bullet.py`).
+  Includes 18 new scorecard cases: independent hand arithmetic, both weight variants, real
+  no-speed-data skip, unavailable/zero-population scores, strict keys/invalid weights,
+  large-weight scaling, retained sampling intervals, constant/inconclusive states, independent
+  curved-road coordinates and incident names, report ordering/width, output/config roundtrip,
+  known 200 m scale bar and overwrite cleanup. The final focused rerun also passed **42 tests**
+  in 54.67 seconds after the presentation fixes, including long Unicode incident-road names,
+  embedded newlines, unchanged GeoPackage names and report heading/ASCII/width checks.
+- The zone invariance assertion now excludes the newly collected report-context warnings,
+  which intentionally change when zones are supplied. All original non-zone analysis values
+  and node/link fields are still compared exactly; the scorecard/locator results also match.
+- `examples/create_ticket14_demo.py` completed structural, population, population/user-weighted
+  and missing-metric runs in `results/ticket14-demo/`. Exported node/link layers, source summaries,
+  report order/width, coordinates and supplied-weight arithmetic are independently checked in
+  `verification.json`. The configured population composite is **0.8714785994546927**, using
+  normalized weights 0.3/0.1/0.1/0.1/0.2/0.2. Unconfigured runs contain no composite key.
+- Actual offline CLI run uses `data/ticket14-demo/uniform.yaml`, writing `results/ticket14-cli/`.
+  Population examples substitute bbox acquisition with the frozen grid only; actual cleaning,
+  population allocation and analyses execute. Repeat controlled population runs via the script.
+- Visual review found a score-label overlap with a structural marker and ambiguous raw-metric
+  chart labels. Labels now name the normalized quantities and sit beyond both markers/bars.
+  Map titles identify structural fields, and population-retention reporting has no misleading
+  structural counterpart. Refreshed scorecard, critical-road/undefined-node maps and zone map
+  were visually inspected; report values and the controlled demos passed again after those fixes.
+- Full offline regression: **341 passed, 5 skipped** in 591.80 seconds. The opt-in
+  network/performance tests are skipped; warnings are existing dependency deprecations and
+  the intentionally missing-CRS fixture. Final focused checks after presentation adjustments:
+  **42 passed**. Final actual CLI execution returned exit code **0**.
+
+User manual review remains pending. Start with `results/ticket14-demo/user-weighted/report.txt`,
+its scorecard/map PNGs, `verification.json` and the missing-metric report. These checks establish
+reporting correctness, not calibrated hazard probabilities or a universal city ranking.

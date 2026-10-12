@@ -161,6 +161,24 @@ class ZonesConfig(StrictModel):
         return self
 
 
+COMPOSITE_KEYS = ("robustness_attack", "robustness_failure", "redundancy_bridges",
+                  "redundancy_detour", "reliability", "accessibility")
+
+
+class CompositeConfig(StrictModel):
+    weights: dict[str, Annotated[float, Field(ge=0, allow_inf_nan=False)]] | None = None
+
+    @model_validator(mode="after")
+    def validate_weights(self):
+        if self.weights is not None:
+            unknown = set(self.weights) - set(COMPOSITE_KEYS)
+            if unknown:
+                raise ValueError("composite.weights: unknown keys: " + ", ".join(sorted(unknown)))
+            if not self.weights or not any(value > 0 for value in self.weights.values()):
+                raise ValueError("composite.weights must contain at least one positive weight")
+        return self
+
+
 class RunConfig(StrictModel):
     input: InputConfig
     network: NetworkConfig = Field(default_factory=NetworkConfig)
@@ -173,6 +191,7 @@ class RunConfig(StrictModel):
     accessibility: AccessibilityConfig = Field(default_factory=AccessibilityConfig)
     population: PopulationConfig = Field(default_factory=PopulationConfig)
     zones: ZonesConfig = Field(default_factory=ZonesConfig)
+    composite: CompositeConfig = Field(default_factory=CompositeConfig)
     output: OutputConfig = Field(default_factory=OutputConfig)
 
     @model_validator(mode="after")

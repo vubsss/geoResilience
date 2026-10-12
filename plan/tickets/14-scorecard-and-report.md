@@ -4,7 +4,7 @@
 
 **Blocked by:** 05, 06, 07, 09, 11
 
-**Status:** ready-for-agent
+**Status:** implemented and automatically verified (13 October 2026); full offline suite 341 passed, 5 skipped; manual review pending
 
 ## Behaviour
 
@@ -54,8 +54,16 @@ composite:
 - `scorecard.png`: a simple horizontal bar chart of the normalised scores (no composite unless configured).
 
 ## Acceptance criteria
-- [ ] A full run on a fixture produces a scorecard with every row filled. Disabling stages (e.g. no maxspeed, no population) shows "not computed" with a reason, and the run does not crash.
-- [ ] Composite: the weighted mean of the normalised scores is checked by hand on a fixture. Unknown keys and missing metrics raise errors. Without weights, no composite key appears.
-- [ ] `report.txt` sections appear in the specified order (a test checks the section headings), and every line is ≤ 100 characters and ASCII-only.
-- [ ] Top tables include lat/lon in WGS84.
-- [ ] Figures are generated with the shared style (smoke test: the files exist and are non-empty).
+- [x] A full run on a fixture produces a scorecard with every row filled. Disabling stages (e.g. no maxspeed, no population) shows "not computed" with a reason, and the run does not crash.
+- [x] Composite: the weighted mean of the normalised scores is checked by hand on a fixture. Unknown keys and missing metrics raise errors. Without weights, no composite key appears.
+- [x] `report.txt` sections appear in the specified order (a test checks the section headings), and every line is ≤ 100 characters and ASCII-only.
+- [x] Top tables include lat/lon in WGS84.
+- [x] Figures are generated with the shared style (smoke test: the files exist and are non-empty).
+
+
+Evidence: [ticket log](../../TICKET_UPDATES.md#current-ticket-14--scorecard-and-final-report),
+[scorecard tests](../../tests/test_scorecard.py), [offline examples](../../examples/create_ticket14_demo.py)
+and README's Ticket 14 section. Normalisations are project reporting choices motivated by the
+papers; they are not universal paper-defined resilience scores. Population pair connectivity
+and allocated main-SCC population retention are reported separately. Existing structural maps
+retain their source fields; locator tables disclose their reporting ranks and selected variants.
