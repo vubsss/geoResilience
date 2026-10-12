@@ -8,8 +8,11 @@ These recommendations do not reopen completed tickets. Ticket 09 is completed fo
 your request; its additional experiments remain follow-up work. Ticket 10 is completed and
 manually verified by you as of 11 October 2026, with verification evidence in the ticket log.
 Ticket 11 is completed and manually verified by you as of 12 October 2026;
-its completed checks and further recommendations are recorded below. Tickets 12–14 and 16
-remain prospective; Ticket 15's implemented comparisons and remaining experiments are below.
+its completed checks and further recommendations are recorded below. Ticket 12 is completed
+as of 13 October 2026 following your manual review and acceptance, including real-data validation.
+Its checks and remaining recommendations are below.
+Tickets 13–14 and 16 remain prospective; Ticket 15's implemented comparisons and remaining
+experiments are below.
 
 Unchecked items are proposed follow-ups, not claims that the corresponding behavior is
 currently untested. Checked items reference existing test evidence. Some recommendations overlap
@@ -212,15 +215,43 @@ human travel behaviour or equivalence to the AP3 expression.
   record peak memory and runtime versus R, worker count and candidate coverage. The 100-node
   demo does not validate the original plan's city-scale Ada/laptop cost assumptions.
 
-## 12 — Population weighting (prospective)
+## 12 — Population weighting
 
-- [ ] Extend synthetic rasters to nodata, zero cells, boundary cells, differing CRSs and snap-limit
-  ties. Check conservation: clipped positive population equals allocated plus unallocated totals.
-- [ ] Check all-ones and unequal weights across accessibility, damage and exact-enumerated
-  reliability; verify that uniform outputs remain available and unchanged.
-- [ ] Test missing/corrupt cached downloads and recorded catalogue fixtures. Keep live acquisition
-  separate and record dataset provenance. Distinguish weighted pair fractions from counts of people;
-  test units before labeling any quantity as people disconnected.
+Implemented on 12 October 2026 and completed at your request on 13 October 2026 following
+manual review. Unchecked experiments remain optional follow-ups. Synthetic known-answer tests
+establish arithmetic and allocation behavior. A real-data geographic check adds evidence for
+CRS alignment and allocation on actual roads; neither establishes census accuracy.
+
+- [x] Test projected/geographic synthetic rasters, clipping, nodata, zero/negative/nonfinite
+  cells, distant cells and deterministic nearest-node ties. Check allocated/unallocated totals
+  and no-overlap behavior. Evidence: `tests/test_population.py`.
+- [x] Check all-ones equality, unequal destination/pair weights, independent NetworkX routing,
+  exact-enumerated connectivity and one/two-worker execution. Check a seeded 200-node spatial
+  graph, shared metric passes, exports, optional maps and overwrite cleanup.
+- [x] Test recorded catalogue parsing, unavailable years, streamed downloads, cache hashes,
+  size mismatch and partial cleanup. The live Maldives test verifies actual acquisition and
+  a request-free cache hit. The full offline rerun passed: **300 passed, 5 skipped**.
+- [x] Run frozen real OSM roads plus actual WorldPop on central Malé, comparing 100 m and
+  500 m snap limits. Independently check every cell's nearest analysis node, all node allocations,
+  population conservation and baseline weighted Hansen scores at 20 nodes per case. Uniform
+  outputs remain unchanged and allocation is nondecreasing. Evidence:
+  `results/ticket12-male/verification.json` and `examples/validate_ticket12_real.py`.
+- [ ] Optional detailed QGIS inspection of the real-data raster/road/node overlay and all 20
+  sampled allocation lines. Files and instructions are in README's central Malé validation
+  subsection. The generated overlay was inspected during validation; inspection of all 20
+  lines is not separately recorded by the user's overall acceptance of the results.
+- [ ] Add raster centres exactly on polygon edges/vertices, polygon holes, partially covered
+  cells and snap distances just inside/exactly at/just outside the threshold. Apply the same
+  explicit cell-centre clipping convention when comparing independent GIS totals.
+- [ ] Broaden to another frozen city with different street spacing or one-way structure,
+  and predefined snap-limit/accessibility-parameter choices. Record unallocated shares and
+  node/link rank sensitivity; low unallocated share alone does not prove good allocation.
+- [ ] Measure runtime and peak memory on a larger study boundary and raster. Include densely
+  populated cells and sparse roads; the current allocator clips the full study raster into
+  memory before chunking nearest-node queries, so query chunks do not bound raster memory.
+- [ ] If assessing real-world population accuracy, use independent census or survey evidence
+  at compatible dates and geography. Do not treat a plausible overlay or a conserved total
+  as validation of WorldPop estimates or of nearest-junction allocation as a demand model.
 
 ## 13 — Zone aggregation (prospective)
 

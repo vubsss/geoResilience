@@ -130,6 +130,21 @@ class AccessibilityConfig(StrictModel):
         return self
 
 
+class PopulationConfig(StrictModel):
+    worldpop: str | None = None
+    iso3: str = Field(default="IND", pattern=r"^[A-Z]{3}$")
+    year: int = Field(default=2020, ge=1900, le=2100)
+    product: Literal["constrained_100m"] = "constrained_100m"
+    cache_dir: Path = Path("~/.cache/georesilience/worldpop")
+    snap_max_m: float = Field(default=500, ge=0, allow_inf_nan=False)
+
+    @model_validator(mode="after")
+    def validate_path(self):
+        if self.worldpop is not None and not self.worldpop.strip():
+            raise ValueError("population.worldpop must be null, auto, or a GeoTIFF path")
+        return self
+
+
 class RunConfig(StrictModel):
     input: InputConfig
     network: NetworkConfig = Field(default_factory=NetworkConfig)
@@ -140,7 +155,14 @@ class RunConfig(StrictModel):
     reliability: ReliabilityConfig = Field(default_factory=ReliabilityConfig)
     travel_time: TravelTimeConfig = Field(default_factory=TravelTimeConfig)
     accessibility: AccessibilityConfig = Field(default_factory=AccessibilityConfig)
+    population: PopulationConfig = Field(default_factory=PopulationConfig)
     output: OutputConfig = Field(default_factory=OutputConfig)
+
+    @model_validator(mode="after")
+    def validate_population_boundary(self):
+        if self.population.worldpop is not None and self.input.source in {"graphml", "osm_xml"}:
+            raise ValueError("population needs input.source place | polygon | bbox")
+        return self
 
 
 def load_config(path: Path) -> RunConfig:
@@ -150,6 +172,7 @@ def load_config(path: Path) -> RunConfig:
             raise ValueError("configuration must be a YAML mapping")
         # Output-only metadata must not prevent rerunning a resolved config.
         raw.pop("versions", None)
+        raw.pop("population_provenance", None)
         return RunConfig.model_validate(raw)
     except ValidationError as exc:
         details = "; ".join(

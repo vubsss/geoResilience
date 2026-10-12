@@ -10,6 +10,7 @@ FIGURE_FILENAMES = ("degree_hist.png", *(f"{name}_ccdf.png" for name in NODE_MEA
                     "robustness_scc.png", "robustness_efficiency.png", "connectivity_nodes_map.png",
                     "hansen_a_map.png", "vuln_map.png", "access_drop_map.png",
                     *CLASSIFICATION_FIGURES)
+POPULATION_FIGURES = ("population_map.png",)
 
 
 def _critical_map_canvas(links):
@@ -141,6 +142,21 @@ def write_connectivity_figure(nodes, links, folder):
     ax.set_title("Main-component membership probability")
     ax.set_axis_off()
     fig.savefig(folder / "connectivity_nodes_map.png", bbox_inches="tight", dpi=180)
+    plt.close(fig)
+
+
+def write_population_figure(nodes, links, folder):
+    import matplotlib.pyplot as plt
+
+    folder.mkdir(exist_ok=True)
+    fig, ax = _critical_map_canvas(links)
+    links.plot(ax=ax, color="lightgrey", linewidth=.7)
+    nodes.plot(ax=ax, column="population", cmap="viridis", vmin=0,
+               vmax=max(float(nodes.population.max()), 1e-12), markersize=25,
+               legend=True, legend_kwds={"label": "Allocated population per node", "shrink": .65})
+    ax.set_title("WorldPop population assigned to analysis nodes")
+    ax.set_axis_off()
+    fig.savefig(folder / "population_map.png", bbox_inches="tight", dpi=180)
     plt.close(fig)
 
 

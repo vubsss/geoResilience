@@ -81,6 +81,16 @@ class InverseReducer:
         return distances @ self.weights
 
 
+@dataclass
+class JointInverseReducer:
+    weights: np.ndarray
+    population_weights: np.ndarray
+
+    def __call__(self, distances, sources):
+        np.divide(1.0, distances, out=distances, where=distances > 0)
+        return np.column_stack((distances @ self.weights, distances @ self.population_weights))
+
+
 class BaselineDistances:
     """Cache float64 distances only when cache plus workspace fits the budget.
 
@@ -89,10 +99,12 @@ class BaselineDistances:
     Otherwise only row aggregates are retained, and old rows are recomputed.
     """
 
-    def __init__(self, graph, *, n_jobs, budget_bytes, weights=None, cache=None):
+    def __init__(self, graph, *, n_jobs, budget_bytes, weights=None, cache=None, population_weights=None):
         self.graph = graph
         self.n_jobs = n_jobs
         self.weights = node_weights(graph.shape[0], weights)
+        self.population_weights = (None if population_weights is None else
+                                   node_weights(graph.shape[0], population_weights))
         self.denominator = float(self.weights.sum() ** 2 - self.weights @ self.weights)
         self.cache = None
         self._folder = None
@@ -117,21 +129,35 @@ class BaselineDistances:
         self.working_budget_bytes = budget_bytes - (matrix_bytes if self.cache is not None else 0)
         self.engine = removal_engine(graph, n_jobs, self.working_budget_bytes)
         self.row_sums = np.zeros(n)
-        reducer = InverseReducer(self.weights)
+        self.row_sums_pop = np.zeros(n) if self.population_weights is not None else None
+        reducer = (InverseReducer(self.weights) if self.population_weights is None else
+                   JointInverseReducer(self.weights, self.population_weights))
+
+        def store(sources, values):
+            if self.population_weights is None:
+                self.row_sums[sources] = values
+            else:
+                self.row_sums[sources], self.row_sums_pop[sources] = values[:, 0], values[:, 1]
         try:
             if self.cache is not None:
                 for start in range(0, n, self.engine.chunk_rows):
                     sources = np.arange(start, min(n, start + self.engine.chunk_rows))
                     distances = dijkstra(graph, directed=True, indices=sources)
                     self.cache[sources] = distances
-                    self.row_sums[sources] = reducer(distances, sources)
+                    store(sources, reducer(distances, sources))
                 self.cache.flush()
                 self.cache.flags.writeable = False
             else:
                 for sources, values in self.engine.reduce(np.arange(n), reducer, directed=True):
-                    self.row_sums[sources] = values
+                    store(sources, values)
             self.inverse_total = float(self.weights @ self.row_sums)
             self.efficiency = aggregate_efficiency(self.row_sums, self.weights)
+            if self.population_weights is not None:
+                w = self.population_weights
+                self.denominator_pop = float(w @ (w.sum() - w))
+                self.inverse_total_pop = float(w @ self.row_sums_pop)
+                self.efficiency_pop = (self.inverse_total_pop / self.denominator_pop
+                                       if self.denominator_pop > 0 else math.nan)
         except BaseException:
             self.close()
             raise
@@ -190,11 +216,12 @@ class DamageReducer:
     baseline_graph: csr_matrix
     baseline_cache: np.ndarray | None
     weights: np.ndarray
+    population_weights: np.ndarray | None = None
 
     def __call__(self, changed, sources):
         baseline = (None if self.baseline_cache is not None else
                     dijkstra(self.baseline_graph, directed=True, indices=sources))
-        result = np.zeros((len(sources), 4))
+        result = np.zeros((len(sources), 4 if self.population_weights is None else 6))
         for i, source in enumerate(sources):
             before = self.baseline_cache[source] if baseline is None else baseline[i]
             after = changed[i]
@@ -206,8 +233,11 @@ class DamageReducer:
             lost = reachable & ~still_reachable
             longer = reachable & still_reachable & (after > before)
             extra = after[longer] - before[longer]
-            result[i] = (inverse_loss @ pair_weights, pair_weights[lost].sum(),
+            result[i, :4] = (inverse_loss @ pair_weights, pair_weights[lost].sum(),
                          extra.sum(), np.count_nonzero(longer))
+            if self.population_weights is not None:
+                pop_pairs = self.population_weights * self.population_weights[source]
+                result[i, 4:] = inverse_loss @ pop_pairs, pop_pairs[lost].sum()
         return result
 
 
@@ -222,28 +252,43 @@ def _damage_metrics(inverse_loss, lost_pairs, extra_m, affected_pairs, baseline)
 
 def full_link_damage(recompute, baseline, link_id):
     sources = recompute.affected_sources(link_id)
-    reducer = DamageReducer(baseline.graph, baseline.cache, baseline.weights)
-    totals = np.zeros(4)
+    reducer = DamageReducer(baseline.graph, baseline.cache, baseline.weights, baseline.population_weights)
+    totals = np.zeros(4 if baseline.population_weights is None else 6)
     for _, values in recompute.recompute([link_id], sources, reducer):
         # Sum in source order so results do not depend on chunk boundaries/jobs.
         for row in values:
             totals += row
-    return _damage_metrics(*totals, baseline), len(sources)
+    metrics = _damage_metrics(*totals[:4], baseline)
+    if baseline.population_weights is not None:
+        metrics.update(_population_damage(*totals[4:], baseline))
+    return metrics, len(sources)
+
+
+def _population_damage(inverse_loss, lost_pairs, baseline):
+    return {"eff_drop_pop": max(0.0, float(inverse_loss / baseline.inverse_total_pop))
+            if baseline.inverse_total_pop > 0 else math.nan,
+            "disc_pair_frac_pop": float(lost_pairs / baseline.denominator_pop)
+            if baseline.denominator_pop > 0 else math.nan}
 
 
 @dataclass
 class CrossCutReducer:
     weights: np.ndarray
     outside: np.ndarray
+    population_weights: np.ndarray | None = None
 
     def __call__(self, distances, sources):
-        result = np.zeros((len(sources), 2))
+        result = np.zeros((len(sources), 2 if self.population_weights is None else 4))
         for i, source in enumerate(sources):
             row = distances[i]
             reachable = self.outside & np.isfinite(row) & (row > 0)
             inverse = np.divide(1.0, row, out=np.zeros_like(row), where=reachable)
-            result[i] = (inverse @ self.weights, self.weights[reachable].sum())
-            result[i] *= self.weights[source]
+            result[i, :2] = (inverse @ self.weights, self.weights[reachable].sum())
+            result[i, :2] *= self.weights[source]
+            if self.population_weights is not None:
+                w = self.population_weights
+                result[i, 2:] = (inverse @ w, w[reachable].sum())
+                result[i, 2:] *= w[source]
         return result
 
 
@@ -251,8 +296,8 @@ def analytic_bridge_damage(recompute, baseline, link_id):
     side = recompute.bridge_side(link_id)
     outside = np.ones(len(baseline.weights), dtype=bool)
     outside[side] = False
-    reducer = CrossCutReducer(baseline.weights, outside)
-    totals = np.zeros(2)
+    reducer = CrossCutReducer(baseline.weights, outside, baseline.population_weights)
+    totals = np.zeros(2 if baseline.population_weights is None else 4)
     if baseline.cache is not None:
         # Row/column views avoid materialising an |S| x N copy of the cache.
         for source in side:
@@ -264,4 +309,8 @@ def analytic_bridge_damage(recompute, baseline, link_id):
             for _, values in engine.reduce(side, reducer, directed=True):
                 for row in values:
                     totals += row
-    return _damage_metrics(*totals, 0.0, 0, baseline)
+    metrics = _damage_metrics(*totals[:2], 0.0, 0, baseline)
+    if baseline.population_weights is not None:
+        metrics.update(_population_damage(*totals[2:], baseline))
+        metrics["people_disconnected"] = float(baseline.population_weights[side].sum())
+    return metrics

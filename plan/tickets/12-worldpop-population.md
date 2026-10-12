@@ -4,7 +4,7 @@
 
 **Blocked by:** 05, 09, 11
 
-**Status:** ready-for-agent
+**Status:** completed on 13 October 2026 at the user's request following manual review. Implemented and tested on 12 October 2026, including a real OSM/WorldPop integration check.
 
 ## Behaviour
 
@@ -54,12 +54,49 @@ population:
 - Figure: a population-per-node map.
 
 ## Acceptance criteria
-- [ ] Allocation test: a synthetic 3×3 GeoTIFF written in-test, with a known node layout:
+- [x] Allocation test: a synthetic 3×3 GeoTIFF written in-test, with a known node layout:
   - each cell goes to the expected nearest node;
   - one far cell is unallocated and reported.
-- [ ] Clipping test: cells outside the boundary contribute 0.
-- [ ] `auto` download is tested under `@pytest.mark.network` with a small country (e.g. `MDV`) and caching is verified (the second run makes no request). There is an offline test of catalogue-response parsing with a recorded JSON fixture.
-- [ ] Weighted metrics with all-ones W equal the unweighted metrics exactly.
-- [ ] Weighted reliability matches exact enumeration on a ≤ 15-link fixture with non-uniform W.
-- [ ] A clear error appears when no study boundary exists.
-- [ ] Outputs (columns, summary, report, figure) are present.
+- [x] Clipping test: cells outside the boundary contribute 0.
+- [x] `auto` download is tested under `@pytest.mark.network` with a small country (e.g. `MDV`) and caching is verified (the second run makes no request). There is an offline test of catalogue-response parsing with a recorded JSON fixture.
+- [x] Weighted metrics with all-ones W equal the unweighted metrics exactly.
+- [x] Weighted reliability matches exact enumeration on a ≤ 15-link fixture with non-uniform W.
+- [x] A clear error appears when no study boundary exists.
+- [x] Outputs (columns, summary, report, figure) are present.
+
+## Implementation decisions
+
+- `expected_pop_cut_off` uses the existing largest SCC **by node count**, including its
+  smallest-minimum-node-ID tie break. Population does not redefine the main component.
+- Accessibility weights destinations only, retaining ticket 11's unweighted sum over origins.
+- With `accessibility.k: 2`, add `vuln_k2_pop`, `vuln_k2_link_ids_pop` and population-specific
+  winning-link/top-three fields. Each weighting selects its own top three; shared pairs use
+  one traversal. The search is over those selected pairs, not all possible pairs.
+- The verified alias is `cic2020_100m` (original constrained 2020 counts). This series is
+  deliberately distinct from UN-adjusted and newer G2 products; unavailable years error.
+- `people_disconnected` is the population on the smaller node-count side of an analytic
+  bridge. Other closures have an undefined value; pair fractions are not person counts.
+- Zero-denominator weighted ratios are undefined, while allocated/unallocated counts remain
+  meaningful. Unallocated cells never enter the weighted metrics.
+
+See [README](../../README.md#worldpop-population-ticket-12) for config, definitions and the
+reproducible offline examples; [implementation notes](../../TICKET_UPDATES.md) record validation.
+
+## Additional real-data validation
+
+`examples/validate_ticket12_real.py` freezes central Malé roads and the actual Maldives
+WorldPop constrained 2020 count raster, then compares 100 m and 500 m nearest-node snap
+limits with HTTP prohibited. The recorded run passed on 591 nodes, 951 physical links and
+272 positive raster cells. Independent brute-force cell allocation, mass conservation,
+20 NetworkX Hansen baseline checks per case and unchanged uniform metrics all passed.
+
+Overpass downloads were unavailable during this run. Roads came from the main OSM map
+API's XML, retaining tagged highways and applying the project's documented XML drive filter;
+this source change and hashes are recorded in the frozen manifest. Real cleaning and all
+analyses run normally. Consolidation is disabled, closure coverage is candidate-only, and k=2
+retains its selected-pair scope. Roads reflect the download date and population is for 2020.
+
+An allocation overlay, clipped raster, cell/line audit layers and sample CSV are available
+under `results/ticket12-male/` for manual inspection. The full offline suite was rerun:
+**300 passed, 5 skipped**. Further recommended experiments remain in
+[TEST_RECOMMENDATIONS](../TEST_RECOMMENDATIONS.md#12--population-weighting).

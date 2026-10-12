@@ -1273,6 +1273,11 @@ road closures. It uses the same physical-road probability model as Ticket 09, at
 with a separate reproducible random stream. It is a framework extension, not an AP3 replication
 or a traffic simulation. The default model uses **free-flow speeds; no traffic (Tier 4)**.
 
+> **Aside — undecided future option:** population data could help estimate travel demand
+> and congestion-related delays in a future travel-time reliability model. The modelling
+> approach, supporting data and implementation scope have not been decided. Current
+> travel-time calculations do not use population data.
+
 ```yaml
 travel_time:
   enabled: true
@@ -1918,3 +1923,187 @@ Offline regression tests:
 PYTEST_DISABLE_PLUGIN_AUTOLOAD=1 python -m pytest -q \
   tests/test_published_cities.py tests/test_crucitti.py tests/test_crucitti_inspection.py
 ```
+
+## WorldPop population (Ticket 12)
+
+Ticket 12 is **completed as of 13 October 2026**, following your manual review and acceptance
+of the results. Validation includes controlled synthetic examples and real Malé OSM/WorldPop
+data with 100 m and 500 m snap limits; the full offline suite passed with 300 passed, 5 skipped.
+
+Population is optional. Enable it for a study boundary (`place`, `polygon` or `bbox`):
+
+```yaml
+population:
+  worldpop: auto                 # null (off), auto, or a local population-count GeoTIFF
+  iso3: MDV
+  year: 2020
+  product: constrained_100m
+  cache_dir: ~/.cache/georesilience/worldpop
+  snap_max_m: 500
+```
+
+For local data, set `worldpop: /absolute/path/to/counts.tif`. Values must be people **per
+cell**, rather than population density. A single georeferenced band is required. The boundary
+is transformed into the raster's CRS; clipping uses cell centres and excludes nodata, negative
+and nonfinite values. Positive cell centres are transformed to the cleaned graph's metre CRS
+and assigned to the nearest analysis node. Cells farther than `snap_max_m` remain unallocated.
+Exact nearest-node ties select the smallest node ID (numeric IDs sort numerically).
+GraphML and OSM XML inputs have no study boundary and produce the explicit error
+`population needs input.source place | polygon | bbox`.
+
+Automatic acquisition uses the original constrained 2020 100 m count series,
+`cic2020_100m`, verified on **12 October 2026** against the
+[WorldPop REST catalogue](https://hub.worldpop.org/rest/data/pop). This deliberately selects
+one documented series rather than mixing it with UN-adjusted or newer G2 releases. Unavailable
+years produce an error listing the years available for the selected country and series.
+Downloads stream into a temporary file, check exact metadata byte counts when supplied,
+and become cache entries only after raster validation. Each entry has a metadata sidecar
+including SHA-256; subsequent calls validate the hash and make **no HTTP requests**.
+`run_config.yaml.population_provenance` records the absolute file path and hash, plus the
+alias, URL, year, country and dataset ID for automatic acquisition. Output provenance is
+ignored when reloading a resolved config; it is recalculated from the data used by each run.
+
+Existing uniform outputs stay available. Population adds:
+
+- `nodes.population`, `hansen_a_pop`, `vuln_pop`, `vuln_link_id_pop`, `isolated_in_R_pop`,
+  `access_top3_link_ids_pop`, and, with `accessibility.k: 2`, `vuln_k2_pop` and
+  `vuln_k2_link_ids_pop`.
+- `edges.eff_drop_pop`, `disc_pair_frac_pop`, `access_drop_pop`, `access_rank_pop`, and
+  `people_disconnected` (analytic bridges only: population on the smaller node-count side).
+- `summary.json.population` totals: `total`, `allocated`, `unallocated`, `unallocated_pct`,
+  `year`, `alias` and `snap_max_m`; weighted criticality/accessibility headlines next to the
+  existing metrics; `reliability.conn_reliability_pop`, `expected_pop_cut_off` and 95% Monte
+  Carlo intervals, including the probability sweep.
+- A Population report section, both weightings in Accessibility and Connectivity reliability,
+  and `figures/population_map.png` when figures are enabled.
+
+Pair-weighted efficiency and connectivity use `W_i * W_j` over distinct node pairs.
+Hansen accessibility retains ticket 11's **destination-only** weighting:
+`A_i = sum(W_j * exp(-beta*d_ij))`; total accessibility sums `A_i` across origins uniformly.
+Population vulnerability keeps its own top three single-link closures; its `k=2` search
+uses pairs drawn from that selection, so it need not find the global worst pair.
+Uniform and population reductions share baseline routing, affected-source sets, link-removal
+traversals and SCC decompositions. Pair searches share a traversal whenever both weightings
+select the same pair.
+
+`expected_pop_cut_off` counts allocated population outside the largest SCC **by node count**,
+with the existing smallest-minimum-node-ID tie break. It does not redefine the main component
+by population. Disconnected pair fractions have pair units and cannot generally be converted
+to persons; `people_disconnected` is undefined for other closures. Unallocated population is
+reported separately and excluded from all weighted metrics. Population counts may be
+fractional. Zero-denominator ratios are NaN in layers and null in summaries, while meaningful
+absolute counts remain zero. With population disabled, the pipeline continues with uniform
+weights and omits the population outputs.
+
+WorldPop is a modelled estimate, not a census.
+
+Validation commands (activate the project environment first):
+
+```sh
+PYTHONPATH= PYTEST_DISABLE_PLUGIN_AUTOLOAD=1 python -m pytest -q tests/test_population.py
+PYTHONPATH= PYTEST_DISABLE_PLUGIN_AUTOLOAD=1 python -m pytest -q --network tests/test_population.py -m network
+```
+
+The network test downloads Maldives and checks that the second acquisition makes no request.
+The environment prefixes isolate tests from ROS paths and automatically discovered external
+pytest plugins, such as `launch_testing`, which can fail before project tests start.
+Offline tests use a recorded real catalogue response, synthetic 3×3 rasters, independent
+NetworkX accessibility, exact failure-state enumeration, shared-traversal checks and full
+pipeline exports.
+
+For a complete offline example, run:
+
+```sh
+python examples/create_ticket12_demo.py
+```
+
+This creates `results/ticket12-unequal-k2/` and `results/ticket12-ones-k2/`, including
+GeoPackages, reports and maps, plus `results/ticket12-verification.json`. An eight-node
+synthetic path follows eight cells of a 3×3 count raster; the ninth cell is beyond the
+10 m snap limit. The unequal case allocates 36 people and leaves 9 unallocated (20%);
+the all-ones case allocates 8 and leaves 1 unallocated. Both enable the population-specific
+`k=2` search. The example substitutes only the OSM download; actual boundary handling,
+projection, cleaning and all analysis stages run normally. Its generated YAMLs use bbox
+inputs: running those YAMLs directly through the CLI retrieves live OSM roads and therefore
+changes the controlled graph and answers. The rasters are synthetic counts, not WorldPop
+observations. Start by inspecting `results/ticket12-unequal-k2/report.txt`, and in QGIS compare
+`nodes.hansen_a` with `hansen_a_pop` and `edges.access_drop` with `access_drop_pop`.
+
+### Real roads and population: central Malé validation
+
+`examples/validate_ticket12_real.py` adds a geographic integration check using actual OSM
+roads and the WorldPop constrained 2020 count raster for Maldives. The fixed WGS84 window
+is `[73.500, 4.167, 73.521, 4.181]` (west, south, east, north). The roads are from their recorded
+download date; the population estimates are for 2020. This checks the integration of those
+inputs, rather than reconstructing a historical city or validating population against a census.
+
+```sh
+# First acquisition needs internet; --osm-api uses the OSM map API when Overpass is unavailable.
+python examples/validate_ticket12_real.py --download-only --osm-api
+
+# Reuse the frozen inputs for both cases. HTTP requests are explicitly prohibited in this mode.
+python examples/validate_ticket12_real.py --offline --overwrite
+```
+
+Inputs and their SHA-256 hashes are in `results/ticket12-male/inputs/manifest.json`.
+The OSM map API supplies XML including non-road ways: the runner retains tagged highways,
+applies the project's XML drive filter and clips shape nodes to the fixed window. It then
+runs real simplification, metric projection and largest strongly connected component selection.
+Intersection consolidation is disabled to avoid mixing its effects with allocation sensitivity.
+This acquisition differs from the usual buffered Overpass request and is recorded in the
+manifest. It does not substitute a synthetic graph.
+
+The two cases use the same cleaned graph, seed, accessibility settings and failure draws;
+only `population.snap_max_m` changes between **100 m** and **500 m**. Accessibility uses
+half-distance 0.3 km, R=1.5 km, candidate evaluation and the optional k=2 selected-pair search.
+Connectivity uses 1,024 samples; auxiliary robustness/information settings are deliberately
+small and travel time is disabled. Full-city and exhaustive road-pair claims do not follow.
+
+The validation independently selects positive raster cell centres inside the boundary and
+finds nearest nodes by exhaustive Euclidean distances, without the production KD-tree or
+its clipping mask. It compares every node's allocated population and checks conservation,
+then independently recomputes baseline population-weighted Hansen accessibility at 20
+preselected node IDs using NetworkX. Uniform node/edge metrics and connectivity must remain
+unchanged between cases; allocated population must not decrease with the larger snap limit.
+All checked values and tolerances are in `verification.json`, alongside `validation_report.txt`.
+
+The recorded run on **12 October 2026** passed on **591 nodes, 951 physical roads and 272
+positive raster cells**. Both cases evaluated 206 roads for accessibility closures:
+
+| Maximum snap distance | Boundary population | Allocated | Unallocated | Unallocated share |
+| --- | ---: | ---: | ---: | ---: |
+| 100 m | 190,423.954834 | 183,190.237518 | 7,233.717316 | 3.798743% |
+| 500 m | 190,423.954834 | 190,423.954834 | 0 | 0% |
+
+There are 21 unallocated cells at 100 m. The farthest populated cell is 234.127477 m from
+its nearest retained road node, so every cell is within the 500 m limit. The larger limit
+also assigns more population to some junctions; selecting an appropriate limit remains a
+modelling decision. Every node's allocated population matched the independent reference
+exactly. The largest absolute error across the 40 Hansen baseline checks was 6.55e-11
+(acceptance tolerance 1e-7). The ordinary offline regression suite also passed:
+**300 passed, 5 skipped in 327.14 seconds**; live-network and slow cases are opt-in.
+
+For manual inspection, open these files under `results/ticket12-male/`:
+
+- `allocation-overlay.png`: side-by-side raster, roads, allocated node population and
+  unallocated cell centres, with shared node colour scale. Raster reprojection is for display;
+  the calculations use original cell counts.
+- `population-clipped.tif`: the actual WorldPop raster clipped to the study boundary.
+- `allocation-audit.gpkg`: `boundary`, `cells` and `snap_lines`. Each cell carries its population,
+  nearest node ID, distance, allocation flags for both limits and a `sampled` flag.
+- `sample-cells.csv`: 20 cell assignments, selected across the nearest-node distance range,
+  including the closest and farthest cells.
+- `snap-100m/network.gpkg` and `snap-500m/network.gpkg`: analysis nodes/edges; each directory
+  also contains `report.txt`, `summary.json`, `run_config.yaml` and figures.
+
+In QGIS, load the clipped raster first, then the boundary, roads and nodes from either analysis
+GeoPackage. Use graduated styling on `nodes.population`, and inspect `cells` with
+`"sampled" = true` alongside `snap_lines`. Check that the line ends at the stated node, that
+its length agrees with `snap_distance_m`, and that allocation follows the selected limit.
+An independent raster total must use the same cell-centre inclusion rule and exclude nodata;
+do not round fractional population counts to integers before comparing totals.
+
+The runner's generated YAMLs describe normal bbox acquisition. Running them directly through
+`georesilience run` downloads current OSM roads and may change the graph. Use the `--offline`
+runner above for an exact repeat of the frozen experiment. Further validation recommendations
+remain in [plan/TEST_RECOMMENDATIONS.md](plan/TEST_RECOMMENDATIONS.md#12--population-weighting).

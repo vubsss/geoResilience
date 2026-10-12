@@ -143,7 +143,7 @@ def mean_interval(values, confidence=.95):
 class ConnectivityTopology:
     """Binary CSR topology; retain parallel roads until every supplying road fails."""
 
-    def __init__(self, graph, links, weights=None):
+    def __init__(self, graph, links, weights=None, population_weights=None):
         active = ActiveEdgeGraph(graph, links, directed=True)
         self.node_ids = active.node_ids
         self.n = len(self.node_ids)
@@ -158,6 +158,11 @@ class ConnectivityTopology:
         if maximum:
             self.weights = self.weights / maximum  # pair ratios are invariant to weight units
         self.denominator = float(self.weights @ (self.weights.sum() - self.weights))
+        self.population = None if population_weights is None else node_weights(self.n, population_weights)
+        if self.population is not None:
+            maximum_pop = self.population.max(initial=0)
+            self.pop_weights = self.population / maximum_pop if maximum_pop else self.population.copy()
+            self.pop_denominator = float(self.pop_weights @ (self.pop_weights.sum() - self.pop_weights))
         self.tie_order = np.array(sorted(range(self.n), key=lambda i: node_id_key(self.node_ids[i])))
 
     def csr(self, up):
@@ -165,7 +170,7 @@ class ConnectivityTopology:
         return csr_matrix((np.ones(np.count_nonzero(keep), dtype=bool),
                            (self.rows[keep], self.cols[keep])), shape=(self.n, self.n))
 
-    def evaluate(self, up, pairs=(), *, details=True):
+    def evaluate(self, up, pairs=(), *, details=True, joint=False):
         graph = self.csr(up)
         count, labels = connected_components(graph, directed=True, connection="strong")
         if self.denominator <= 0:
@@ -176,6 +181,16 @@ class ConnectivityTopology:
             masses = np.bincount(labels, weights=self.weights, minlength=count)
             score = float(self.weights @ (masses[labels] - self.weights) / self.denominator)
             score = min(1.0, max(0.0, score))
+        if joint:
+            if self.pop_denominator <= 0:
+                pop_score = math.nan
+            elif count == 1:
+                pop_score = 1.0
+            else:
+                masses = np.bincount(labels, weights=self.pop_weights, minlength=count)
+                pop_score = float(self.pop_weights @ (masses[labels] - self.pop_weights) / self.pop_denominator)
+                pop_score = min(1.0, max(0.0, pop_score))
+            score = (score, pop_score)
         if not details:
             return score, None, None
         sizes = np.bincount(labels, minlength=count)
@@ -203,6 +218,8 @@ class _Batch:
     down_square: np.ndarray
     up_sum: np.ndarray
     up_square: np.ndarray
+    fractions_pop: np.ndarray | None = None
+    cutoff_pop: np.ndarray | None = None
 
 
 def _sample_batch(topology, probabilities, primary, pairs, seed, samples):
@@ -211,7 +228,11 @@ def _sample_batch(topology, probabilities, primary, pairs, seed, samples):
     result = _Batch(np.empty((samples, len(probabilities))), np.zeros(topology.n, dtype=np.int64),
                     np.zeros(len(pairs), dtype=np.int64), np.zeros(m, dtype=np.int64),
                     *[np.zeros(m) for _ in range(4)])
-    baseline = topology.evaluate(np.ones(m, dtype=bool), pairs)
+    joint = topology.population is not None
+    if joint:
+        result.fractions_pop = np.empty_like(result.fractions)
+        result.cutoff_pop = np.empty_like(result.fractions)
+    baseline = topology.evaluate(np.ones(m, dtype=bool), pairs, joint=joint)
     previous = [None] * len(probabilities)
     for index in range(samples):
         uniform = rng.random(m)
@@ -222,8 +243,12 @@ def _sample_batch(topology, probabilities, primary, pairs, seed, samples):
             elif previous[scenario] is not None and np.array_equal(up, previous[scenario][0]):
                 value, main, od = previous[scenario][1]
             else:
-                value, main, od = topology.evaluate(up, pairs, details=scenario == primary)
+                value, main, od = topology.evaluate(up, pairs if scenario == primary else (), details=scenario == primary or joint, joint=joint)
                 previous[scenario] = (up, (value, main, od))
+            if joint:
+                value, population_value = value
+                result.fractions_pop[index, scenario] = population_value
+                result.cutoff_pop[index, scenario] = topology.population[~main].sum()
             result.fractions[index, scenario] = value
             if scenario == primary:
                 result.node_counts += main
@@ -272,14 +297,15 @@ class ConnectivityResult:
     pair_fractions: np.ndarray
     runtime_seconds: dict
     computation: dict
+    pair_fractions_pop: np.ndarray | None = None
 
 
 def compute_connectivity(graph, links, config, user_probabilities, *, seed, n_jobs, budget_bytes,
-                         weights=None, od_inputs=None):
+                         weights=None, od_inputs=None, population_weights=None):
     started = perf_counter()
     if n_jobs < 1 or budget_bytes < 1:
         raise ValueError("connectivity n_jobs and budget_bytes must be positive")
-    topology = ConnectivityTopology(graph, links, weights)
+    topology = ConnectivityTopology(graph, links, weights, population_weights)
     od_inputs = load_od_pairs(graph, config.od_pairs_csv) if od_inputs is None else od_inputs
     vectors, sweep_indices = [], []
     for p0 in config.p0_sweep:
@@ -295,9 +321,10 @@ def compute_connectivity(graph, links, config, user_probabilities, *, seed, n_jo
     seeds = np.random.SeedSequence([seed, 9]).spawn(batches)
     # O(nodes + arcs + links) per worker and O(samples*sweep) in the parent.
     # Budget estimates are conservative working-array estimates, excluding Python/runtime overhead.
-    parent_bytes = config.samples * len(vectors) * 8 + 128*(topology.n + len(topology.link_ids) + len(od_inputs.pairs))
+    sample_arrays = 3 if population_weights is not None else 1
+    parent_bytes = config.samples * len(vectors) * 8 * sample_arrays + 128*(topology.n + len(topology.link_ids) + len(od_inputs.pairs))
     worker_bytes = max(1, 128*(topology.n + len(topology.link_ids) + len(topology.rows))
-                       + BATCH_SIZE*len(vectors)*8)
+                       + BATCH_SIZE*len(vectors)*8*sample_arrays)
     if parent_bytes + worker_bytes > budget_bytes:
         raise ValueError("analysis.max_memory_gb is too small for connectivity working arrays")
     useful_jobs = max(1, config.samples*(topology.n + len(topology.rows))*len(vectors)//500000)
@@ -309,12 +336,19 @@ def compute_connectivity(graph, links, config, user_probabilities, *, seed, n_jo
                       np.zeros(len(topology.link_ids), dtype=np.int64),
                       *[np.zeros(len(topology.link_ids)) for _ in range(4)])
 
+    if population_weights is not None:
+        combined.fractions_pop = np.empty_like(fractions)
+        combined.cutoff_pop = np.empty_like(fractions)
+
     def collect(results):
         offset = 0
         with StageProgress("Connectivity Monte Carlo batches", batches) as progress:
             for result in results:
                 end = offset + len(result.fractions)
                 fractions[offset:end] = result.fractions
+                if combined.fractions_pop is not None:
+                    combined.fractions_pop[offset:end] = result.fractions_pop
+                    combined.cutoff_pop[offset:end] = result.cutoff_pop
                 for name in ("node_counts", "od_counts", "down_counts", "down_sum", "down_square", "up_sum", "up_square"):
                     getattr(combined, name)[:] += getattr(result, name)
                 offset = end
@@ -376,10 +410,29 @@ def compute_connectivity(graph, links, config, user_probabilities, *, seed, n_jo
                  "unavailable": sum(row["rel_importance_status"] != "estimated" for row in link_metrics.values()),
                  "top_importance": top_links},
         "od_pairs": od_rows, "od_warnings": od_inputs.warnings}
+    if combined.fractions_pop is not None:
+        def pop_summary(index):
+            interval = mean_interval(combined.fractions_pop[:, index])
+            cut = combined.cutoff_pop[:, index]
+            half = float(norm.ppf(.975) * cut.std(ddof=1) / math.sqrt(len(cut)))
+            total_pop = float(topology.population.sum())
+            return {"conn_reliability_pop": interval["conn_reliability"],
+                    "conn_reliability_pop_ci_low": interval["ci_low"],
+                    "conn_reliability_pop_ci_high": interval["ci_high"],
+                    "expected_pop_cut_off": float(cut.mean()),
+                    "expected_pop_cut_off_ci_low": max(0.0, float(cut.mean()) - half),
+                    "expected_pop_cut_off_ci_high": min(total_pop, float(cut.mean()) + half)}
+        summary.update(pop_summary(primary))
+        summary["population_pair_universe_status"] = ("defined" if topology.pop_denominator > 0
+                                                       else "no_positive_weight_distinct_pairs")
+        summary["population_cut_off_definition"] = "allocated population outside largest node-count SCC"
+        for row, index in zip(summary["sweep"], sweep_indices):
+            row.update(pop_summary(index))
     return ConnectivityResult(summary, node_metrics, link_metrics, od_rows, fractions,
                               {"connectivity_reliability": perf_counter()-started},
                               {"reliability_workers": int(jobs),
-                               "reliability_estimated_working_bytes": int(parent_bytes + jobs*worker_bytes)})
+                               "reliability_estimated_working_bytes": int(parent_bytes + jobs*worker_bytes)},
+                              combined.fractions_pop)
 
 
 def write_od_reliability(result, path, travel_time=None):
@@ -408,6 +461,16 @@ def connectivity_report(summary):
              "p0 sweep (same random uniforms across p0; primary node/link/OD outputs only):",
              "p0           Mutual pair fraction [95% CI]"]
     lines.extend(f"{row['p0']:<12g} {interval(row, 'conn_reliability')}" for row in summary["sweep"])
+    if "conn_reliability_pop" in summary:
+        lines.extend([f"conn_reliability_pop (95% CI): "
+                      f"{interval(summary, 'conn_reliability_pop', 'conn_reliability_pop_ci_low', 'conn_reliability_pop_ci_high')}",
+                      f"expected_pop_cut_off: {summary['expected_pop_cut_off']:.9g} persons; "
+                      f"95% CI [{summary['expected_pop_cut_off_ci_low']:.9g}, "
+                      f"{summary['expected_pop_cut_off_ci_high']:.9g}]",
+                      "Population cut off means allocated population outside the largest SCC by node count.",
+                      "Population sweep: p0 | conn_reliability_pop | expected_pop_cut_off"])
+        lines.extend(f"{row['p0']:g} | {row['conn_reliability_pop']} | {row['expected_pop_cut_off']:.9g}"
+                     for row in summary["sweep"])
     first, last = summary["sweep"][0], summary["sweep"][-1]
     if first["conn_reliability"] is not None:
         lines.append(f"From p0={first['p0']:g} to {last['p0']:g}, mutual connectivity decreases by "

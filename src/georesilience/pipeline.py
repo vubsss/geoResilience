@@ -10,6 +10,7 @@ import geopandas as gpd
 import yaml
 from pyproj import CRS
 from shapely.geometry import Point
+from shapely import wkt
 
 from . import __version__
 from .config import RunConfig
@@ -17,8 +18,8 @@ from .centralities import centrality_report, compute_centralities
 from .classification import classify_network, classification_report, write_classification_figures
 from .connectivity import compute_connectivity, connectivity_report, load_od_pairs, write_od_reliability
 from .criticality import compute_criticality, criticality_report
-from .figures import (FIGURE_FILENAMES, write_connectivity_figure, write_figures,
-                      write_robustness_figures, write_accessibility_figures)
+from .figures import (FIGURE_FILENAMES, POPULATION_FIGURES, write_connectivity_figure, write_figures,
+                      write_robustness_figures, write_accessibility_figures, write_population_figure)
 from .failure_probabilities import compute_failure_probabilities, failure_probabilities_report
 from .links import _link_rows
 from .network import cleaning_report, load_and_clean
@@ -27,6 +28,7 @@ from .robustness import compute_robustness, robustness_report, write_curves
 from .time_models import prepare_time_model
 from .travel_time import compute_travel_time, travel_time_report
 from .accessibility import compute_accessibility, accessibility_report
+from .population import prepare_population, population_report
 
 
 def _versions():
@@ -52,7 +54,21 @@ def _resolved_config(config, out_dir, computation, custom_time_model=False):
     return values
 
 
+def _population_column_order(frame):
+    """Place weighted variants next to their uniform counterparts in exported layers."""
+    columns = []
+    for name in frame.columns:
+        if name.endswith("_pop") and name[:-4] in frame.columns:
+            continue
+        columns.append(name)
+        if name + "_pop" in frame.columns:
+            columns.append(name + "_pop")
+    return frame[columns]
+
+
 def run(config: RunConfig, out_override: Path | None = None, overwrite: bool = False, *, time_model=None):
+    if config.population.worldpop is not None and config.input.source in {"graphml", "osm_xml"}:
+        raise ValueError("population needs input.source place | polygon | bbox")
     if config.analysis.directed_centrality:
         raise NotImplementedError("analysis.directed_centrality: true is planned; use false for Ticket 03")
     out_dir = out_override or config.output.dir
@@ -63,13 +79,16 @@ def run(config: RunConfig, out_override: Path | None = None, overwrite: bool = F
         for name in ("network.gpkg", "summary.json", "report.txt", "run_config.yaml", "robustness_curves.csv",
                      "od_reliability.csv"):
             (out_dir / name).unlink(missing_ok=True)
-        for name in FIGURE_FILENAMES:
+        for name in (*FIGURE_FILENAMES, *POPULATION_FIGURES):
             (out_dir / "figures" / name).unlink(missing_ok=True)
         try:
             (out_dir / "figures").rmdir()
         except OSError:
             pass
     graph, input_meta, cleaning = load_and_clean(config)
+    boundary_wkt = input_meta.get("study_boundary_wkt")
+    population = prepare_population(graph, wkt.loads(boundary_wkt) if boundary_wkt else None, config.population)
+    population_weights = population.weights if population is not None else None
 
     links = _link_rows(graph)
     failure_probabilities = compute_failure_probabilities(graph, links, config.reliability)
@@ -92,7 +111,7 @@ def run(config: RunConfig, out_override: Path | None = None, overwrite: bool = F
     criticality = compute_criticality(
         graph, links, screening, n_jobs=computation["n_jobs"],
         budget_bytes=computation["memory_budget_bytes"], directed=config.analysis.directed_removal,
-        undirected_efficiency=statistics["global_efficiency"])
+        undirected_efficiency=statistics["global_efficiency"], population_weights=population_weights)
     for row in links:
         row.update(criticality.link_metrics[row["link_id"]])
     statistics["criticality"] = criticality.summary
@@ -101,7 +120,7 @@ def run(config: RunConfig, out_override: Path | None = None, overwrite: bool = F
     computation.update(criticality.computation)
     accessibility = compute_accessibility(
         graph, links, screening, config.accessibility, n_jobs=computation["n_jobs"],
-        budget_bytes=computation["memory_budget_bytes"])
+        budget_bytes=computation["memory_budget_bytes"], population_weights=population_weights)
     for row in links:
         row.update(accessibility.link_metrics[row["link_id"]])
     statistics["accessibility"] = accessibility.summary
@@ -121,7 +140,7 @@ def run(config: RunConfig, out_override: Path | None = None, overwrite: bool = F
     connectivity = compute_connectivity(
         graph, links, config.reliability, failure_probabilities.user_probabilities,
         seed=config.analysis.seed, n_jobs=computation["n_jobs"],
-        budget_bytes=computation["memory_budget_bytes"], od_inputs=od_inputs)
+        budget_bytes=computation["memory_budget_bytes"], od_inputs=od_inputs, population_weights=population_weights)
     statistics["runtime_seconds"].update(connectivity.runtime_seconds)
     computation.update(connectivity.computation)
     travel_time = compute_travel_time(
@@ -138,6 +157,7 @@ def run(config: RunConfig, out_override: Path | None = None, overwrite: bool = F
     for i, (node, data) in enumerate(graph.nodes(data=True)):
         d = degree[node]
         nodes.append({"node_id": str(node), "x": data["x"], "y": data["y"],
+                      **({"population": float(population_weights[i])} if population is not None else {}),
                       "degree": d, "degree_centrality": d / (n - 1) if n > 1 else 0.0,
                       **{name: float(values[i]) for name, values in node_metrics.items()},
                       **screening.node_metrics[node],
@@ -148,10 +168,12 @@ def run(config: RunConfig, out_override: Path | None = None, overwrite: bool = F
                       "geometry": Point(data["x"], data["y"])})
     crs = graph.graph.get("crs", "EPSG:4326")
     nodes_gdf = gpd.GeoDataFrame(nodes, geometry="geometry", crs=crs)
+    nodes_gdf = _population_column_order(nodes_gdf)
     nodes_gdf.to_file(
         out_dir / "network.gpkg", layer="nodes", driver="GPKG", engine="pyogrio")
     gpkg_links = [{key: value for key, value in row.items() if not key.startswith("_")} for row in links]
     links_gdf = gpd.GeoDataFrame(gpkg_links, geometry="geometry", crs=crs)
+    links_gdf = _population_column_order(links_gdf)
     links_gdf.to_file(
         out_dir / "network.gpkg", layer="edges", driver="GPKG", engine="pyogrio", mode="a")
 
@@ -172,6 +194,8 @@ def run(config: RunConfig, out_override: Path | None = None, overwrite: bool = F
                                  "max": max(degree.values(), default=0),
                                  "histogram": histogram}, **statistics},
     }
+    if population is not None:
+        summary["population"] = population.summary
     (out_dir / "summary.json").write_text(json.dumps(summary, indent=2) + "\n")
     lines = [f"GeoResilience {__version__}", f"Input: {summary['meta']['input']}",
              f"UTC: {summary['meta']['timestamp_utc']}", "", "Network",
@@ -182,6 +206,8 @@ def run(config: RunConfig, out_override: Path | None = None, overwrite: bool = F
              "", *cleaning_report(cleaning), "", "Degree", "degree: count"]
     lines.extend(f"{key}: {value}" for key, value in histogram.items())
     lines.extend(["", *centrality_report(statistics, links)])
+    if population is not None:
+        lines.extend(["", *population_report(population.summary)])
     lines.extend(["", *redundancy_report(screening.summary, links)])
     lines.extend(["", *criticality_report(criticality.summary, criticality.information_summary)])
     lines.extend(["", *robustness_report(robustness.summary)])
@@ -193,12 +219,16 @@ def run(config: RunConfig, out_override: Path | None = None, overwrite: bool = F
     lines = [line.encode("ascii", "backslashreplace").decode() for line in lines]
     lines = [textwrap.fill(line, width=100) if len(line) > 100 else line for line in lines]
     (out_dir / "report.txt").write_text("\n".join(lines) + "\n")
-    (out_dir / "run_config.yaml").write_text(yaml.safe_dump(
-        _resolved_config(config, out_dir, computation, time_model is not None), sort_keys=False))
+    resolved = _resolved_config(config, out_dir, computation, time_model is not None)
+    if population is not None:
+        resolved["population_provenance"] = population.provenance
+    (out_dir / "run_config.yaml").write_text(yaml.safe_dump(resolved, sort_keys=False))
     if config.output.figures:
         write_figures(nodes_gdf, links_gdf, out_dir / "figures")
         write_robustness_figures(robustness, out_dir / "figures")
         write_classification_figures(classification, out_dir / "figures")
         write_connectivity_figure(nodes_gdf, links_gdf, out_dir / "figures")
         write_accessibility_figures(nodes_gdf, links_gdf, out_dir / "figures")
+        if population is not None:
+            write_population_figure(nodes_gdf, links_gdf, out_dir / "figures")
     return summary

@@ -68,18 +68,21 @@ def information_centrality(active, candidates, *, n_jobs, budget_bytes, weights=
 
 
 def compute_criticality(graph, links, screening, *, n_jobs, budget_bytes, directed=True,
-                        weights=None, cache=None, undirected_efficiency=None):
+                        weights=None, cache=None, undirected_efficiency=None, population_weights=None):
     started = perf_counter()
     active = ActiveEdgeGraph(graph, links, directed=directed)
     recompute = AffectedSourceRecompute(active, n_jobs=n_jobs, budget_bytes=budget_bytes)
     evaluated = screening.candidate_links | screening.analytic_bridges
     metrics = {row["link_id"]: {**dict.fromkeys(DAMAGE_FIELDS, math.nan),
                                "damage_method": None, "crit_rank": math.nan} for row in links}
+    if population_weights is not None:
+        for values in metrics.values():
+            values.update(eff_drop_pop=math.nan, disc_pair_frac_pop=math.nan, people_disconnected=math.nan)
     methods = {"full": 0, "analytic": 0}
     affected_sources_total = 0
     with _Progress("Removal baseline", 1) as progress:
         baseline = BaselineDistances(recompute.graph, n_jobs=n_jobs, budget_bytes=budget_bytes,
-                                     weights=weights, cache=cache)
+                                     weights=weights, cache=cache, population_weights=population_weights)
         progress.advance()
     baseline_done = perf_counter()
     with baseline:
@@ -128,6 +131,10 @@ def compute_criticality(graph, links, screening, *, n_jobs, budget_bytes, direct
                    "affected_pairs": sum(metrics[key]["affected_pairs"] for key in evaluated)},
     }
     summary["totals"] = {key: _json_value(value) for key, value in summary["totals"].items()}
+    if population_weights is not None:
+        summary["baseline_efficiency_pop"] = _json_value(baseline.efficiency_pop)
+        for name in ("eff_drop_pop", "disc_pair_frac_pop"):
+            summary["totals"][name + "_sum"] = _json_value(sum(metrics[key][name] for key in evaluated))
     computation["criticality_affected_sources_total"] = affected_sources_total
     undirected = active if not directed else ActiveEdgeGraph(graph, links, directed=False)
     # Only reuse the unweighted Ticket 03 baseline when no weights were supplied.
@@ -160,6 +167,15 @@ def criticality_report(criticality, information):
                      f"{row['first_osm_way_id'] or '-'} | {values} | {row['candidate_reason'] or '-'}")
     if not criticality["top_20"]:
         lines.append("(none)")
+    if "baseline_efficiency_pop" in criticality:
+        lines.extend(["", f"Population-weighted baseline efficiency: {criticality['baseline_efficiency_pop']}",
+                      "Population columns for the same critical links:",
+                      "link_id | eff_drop_pop | disc_pair_frac_pop | people_disconnected"])
+        for row in criticality["top_20"]:
+            lines.append(f"{row['link_id']} | {row['eff_drop_pop']} | {row['disc_pair_frac_pop']} | "
+                         f"{row['people_disconnected']}")
+        lines.append("people_disconnected is the population of the smaller node-count side of an analytic bridge; "
+                     "undefined for other closures. Pair fractions cannot be converted directly to persons.")
     lines.extend(["", "Information centrality", f"Coverage: {information['coverage']}; "
                   f"candidate count: {information['candidate_count']}",
                   "Undirected graph; all incident edges removed, original N retained.",

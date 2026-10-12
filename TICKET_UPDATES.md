@@ -11,7 +11,7 @@
 - [x] **09 — Connectivity reliability** — completed for now at your request; implementation and tests verified. Includes three exact-answer fixtures and three 200-node spatial scenarios; AP3 scope corrections and further testing recommendations documented.
 - [x] **10 — Travel-time reliability** — completed, tested and manually verified by you. Includes replaceable time models, exact route examples and a sparse spatial network; further validation recommendations documented.
 - [x] **11 — Hansen accessibility (uniform masses)** — completed, tested and manually verified by you on 12 October 2026, using the plan's exponential distance-decay definition.
-- [ ] **12 — WorldPop population** — not started.
+- [x] **12 — WorldPop population** — completed, tested and accepted by you after manual review on 13 October 2026. Includes real Malé roads/WorldPop and 100 m/500 m snap comparison. Full offline suite: 300 passed, 5 skipped.
 - [ ] **13 — Zone aggregation** — not started.
 - [ ] **14 — Scorecard and final report** — not started.
 - [ ] **15 — Crucitti comparison** — implemented, tested and manually reviewed, including modern OSM sensitivity/inspection and the authors' published historical graphs. Historical data: 2/4 information and 3/4 betweenness matches under both conventions; MISMATCH. Planned-city classification discrepancy remains open.
@@ -1981,3 +1981,190 @@ vector. For `path-k2`, sorting by node IDs 0, 1 and 2 gives **[0.75, 1.00, 0.75]
 README now makes this output location explicit. The additional sensitivity, global-pair-gap
 and larger-network experiments remain follow-up recommendations, not completion blockers.
 No analysis code, result files or test outcomes changed during this documentation update.
+
+## Ticket 12 — WorldPop population
+
+Implemented and tested on **12 October 2026**. **Completed on 13 October 2026**, at your
+request following manual review of the results.
+
+### Changes and decisions
+
+- Added validated optional `population` settings, local GeoTIFF hashes, and streamed automatic
+  WorldPop acquisition. Verified `cic2020_100m` against the live REST catalogue and Maldives
+  country response on 12 October 2026. This chooses the original constrained 2020 count series;
+  other series are not silently substituted. Unavailable years list the available years.
+- Automatic downloads validate available exact byte counts, validate the raster, and atomically
+  publish the completed file and metadata. Cache hits verify SHA-256 and make no HTTP requests.
+  `run_config.yaml.population_provenance` records the file/hash and automatic dataset metadata.
+- Boundary clipping, nodata handling, CRS transformation and nearest-node allocation use
+  rasterio, pyproj and cKDTree. Cells beyond the snap limit remain unallocated. The summary and
+  report expose their count and percentage. Local raster CRSs may differ from WGS84.
+- Added joint uniform/population reducers for criticality baselines, full removals and analytic
+  bridges, and Hansen baselines/removals. Both weightings share affected sources and traversals.
+  Reliability computes both pair fractions from each existing SCC decomposition in the same
+  Monte Carlo pass, and accumulates population outside the main SCC.
+- Applied the recommendations you approved: the main SCC remains largest **by node count**
+  with the existing ID tie break; population does not redefine it. With `k: 2`, population
+  vulnerability uses its own top three closures and exports `vuln_k2_pop` and winning link IDs.
+  Pair traversals are shared when both weightings select the same pair. Hansen keeps ticket
+  11's destination-only weighting and uniform aggregation over origins.
+- Exported the population and weighted columns beside their uniform counterparts, weighted
+  summary headlines and probability sweep, both report versions, the Population section and
+  `population_map.png`. `people_disconnected` is the smaller node-count side's population for
+  analytic bridges, and is undefined for other closures. Pair fractions are not person counts.
+- Undefined weighted ratios remain NaN/null with zero pair mass or zero accessibility.
+  Absolute population counts stay meaningful. Disabling population preserves uniform outputs;
+  overwrite removes stale optional maps and columns.
+
+### Validation actually run
+
+- Final focused suite: **42 passed, 1 skipped in 20.38 seconds**:
+
+  ```sh
+  PYTEST_DISABLE_PLUGIN_AUTOLOAD=1 MPLCONFIGDIR=/tmp/georesilience-matplotlib \
+    .venv/bin/python -m pytest -q tests/test_population.py tests/test_accessibility.py \
+    tests/test_centralities.py::test_outputs_and_overwrite_removes_old_figures
+  ```
+
+  The skip is the opt-in network test. This includes 19 population tests: synthetic 3×3
+  rasters in geographic/projected CRSs; far cells, clipping, nodata, zero values, stable ties;
+  recorded catalogue parsing, invalid years/config, streaming/cache/hash/size failure checks;
+  exact all-ones equivalence; weighted accessibility and damage against independent NetworkX;
+  exhaustive connectivity failure states on a five-link fixture plus a 20,000-sample check;
+  zero mass; one/two-worker reproducibility with actual two-worker execution and small
+  routing chunks; full output/provenance/config/overwrite checks; and a seeded **200-node**
+  spatial graph with weighted baselines and evaluated removals matching NetworkX within 1e-9.
+- Live WorldPop test: **1 passed in 145.52 seconds**. Downloaded the Maldives constrained
+  raster, checked its georeferencing and alias, then prohibited HTTP requests and acquired it
+  again successfully from cache:
+
+  ```sh
+  python -m pytest -q --network tests/test_population.py -m network
+  ```
+
+- The full ordinary offline run reported **297 passed, 5 skipped, 1 failed in 324.97 seconds**.
+  The failure was an existing default-output test: adding an optional population map to the
+  standard figure list made the test expect it with population disabled. Fixed this by keeping
+  optional population figures separate while including them in overwrite cleanup. The failing
+  test passed in the final focused suite above. All criticality/connectivity regressions passed
+  in the full run; it was not repeated after the focused fixes and two additional population
+  tests. The skipped cases were opt-in network/slow tests.
+- Generated both offline examples on the final code, independently checked the exported
+  population vectors and Hansen scores against exact sums of powers of 1/2, and checked every
+  all-ones criticality/accessibility column for exact equality with its uniform version.
+  Inspected the population map and checked adjacent column ordering. `git diff --check` passed.
+- The installed Shapely/affine versions emit deprecation warnings for their older transformation
+  interfaces; the checks pass. These tests establish formula/allocation agreement, not census
+  accuracy or city-scale performance guarantees.
+
+### Review artifacts
+
+Run `python examples/create_ticket12_demo.py` to regenerate both controlled examples. Only
+OSM download is replaced with a frozen synthetic bbox graph; real boundary handling,
+projection, cleaning, allocation and analyses run. The generated YAMLs run against live OSM
+if invoked directly through the CLI, so that is a different graph from the controlled demo.
+
+- `results/ticket12-unequal-k2/report.txt`: 45 synthetic people inside the boundary, **36
+  allocated and 9 unallocated (20%)**. Uniform total A is **11.9375**; population total A is
+  **53.90625**. Population reliability is **0.9316263163919414**, and expected population cut
+  off is **1.9755859375** under the configured length-proxy failure probabilities.
+- `results/ticket12-ones-k2/report.txt`: 8 allocated and 1 unallocated. Both total A values
+  are **11.9375**, and both connectivity scores are **0.9247000558035714**.
+- Both folders include `network.gpkg`, `summary.json`, `run_config.yaml` and figures; shared
+  headline verification is in `results/ticket12-verification.json`.
+
+The demo rasters contain synthetic counts. The live acquisition test uses actual WorldPop.
+See [README](README.md#worldpop-population-ticket-12) for configuration and metric definitions.
+
+### Additional real-data validation — 12 October 2026
+
+At your request, added and ran `examples/validate_ticket12_real.py` on actual roads and
+population in central Malé, Maldives. This supplements the synthetic known-answer tests.
+You subsequently accepted the results and requested completion on 13 October 2026.
+
+- Fixed WGS84 bbox `[73.500, 4.167, 73.521, 4.181]`. Frozen OSM source has 1,160 nodes and
+  2,059 directed edges before cleaning. Simplification, projection and largest-SCC selection
+  retain **591 nodes, 1,239 directed edges and 951 physical roads**; three nodes and about
+  0.950496 km of roads (1.7783%) are dropped by component selection. Consolidation is disabled.
+- Overpass was unavailable (connection refusal, HTTP errors/timeouts). Downloaded the actual
+  XML extract from the main OpenStreetMap map API, retained tagged highways, applied the
+  project's XML drive filter and clipped shape nodes to the fixed bbox. This documented
+  acquisition change affects the download/boundary method, not the population formulas.
+  Included cleaned street types are primary, primary_link, secondary, tertiary, residential
+  and living_street. Raw XML, filtered GraphML, boundary, raster and source metadata are frozen
+  under `results/ticket12-male/inputs/`; the manifest records SHA-256 hashes and download date.
+- Downloaded the actual WorldPop Maldives **constrained 2020** raster (`cic2020_100m`, dataset
+  49827) through the production acquisition code. Both analyses then use its validated cache
+  entry. The runner prohibits all HTTP requests in `--offline` mode and reuses the same
+  cleaned graph for both limits; no synthetic graph is substituted.
+- Both runs use seed 42, two workers, a 0.5 GB configured budget, half-distance 0.3 km,
+  R=1.5 km, k=2 and candidate-only closure coverage (**206 evaluated roads**). Connectivity
+  uses 1,024 samples with p0=0.01 and sweep [0, 0.01, 0.05]; other analysis settings are small
+  and travel time is disabled. Population snap limit is the only experimental change.
+
+| Snap limit | Boundary population | Allocated | Unallocated | Unallocated share |
+| --- | ---: | ---: | ---: | ---: |
+| 100 m | 190,423.954834 | 183,190.237518 | 7,233.717316 | 3.798743% |
+| 500 m | 190,423.954834 | 190,423.954834 | 0 | 0% |
+
+- The window contains **272 positive population cells**. At 100 m, 21 remain unallocated.
+  Nearest-node distances range from **3.589063 m to 234.127477 m**, explaining why 500 m
+  allocates all cells. The larger limit changes the population represented by weighted
+  metrics; it does not change the intact road network or establish an optimal snap limit.
+- The independent reference selects cell centres inside the boundary without production
+  `rasterio.mask`, then searches every retained node by Euclidean distance without the
+  production KD-tree. Every node's allocation matches exactly, and allocated plus unallocated
+  equals clipped positive population within 1e-7. Independent NetworkX truncated Dijkstra
+  checks weighted baseline Hansen scores at 20 predefined node IDs in each case. The maximum
+  absolute error is **6.55e-11**, below the 1e-7 threshold. These are baseline spot checks;
+  weighted closure correctness remains covered by the existing independent synthetic tests.
+- Confirmed allocation is nondecreasing at every node. Uniform accessibility/vulnerability,
+  information, centralities, link damage/ranks, failure counts/importance and connectivity
+  agree between cases (numeric tolerance 1e-12; connectivity equality is exact).
+- Weighted total accessibility is **17,525,741.479871143 / 18,085,466.95752499** for 100/500 m;
+  uniform total accessibility is **57,747.10299351109** in both. Population-weighted
+  connectivity is **0.9993913476433743 / 0.9994074146757825**, and expected allocated population
+  outside the largest SCC is **55.87229099869728 / 56.53193402290344** persons under the
+  configured independent length-proxy failure model. These reflect different allocated masses.
+- Exported `allocation-overlay.png`, `population-clipped.tif`, `allocation-audit.gpkg`
+  (`cells`, `snap_lines`, `boundary`), a 20-cell `sample-cells.csv`, `verification.json` and
+  `validation_report.txt`, plus full analysis outputs under `snap-100m/` and `snap-500m/`.
+  Inspected the overlay and its geographic alignment, shared colour scales and unallocated
+  coastal cells. QGIS instructions are now in README.
+- Reran the complete ordinary offline suite on the final population implementation:
+  **300 passed, 5 skipped, 33 deprecation warnings in 327.14 seconds**. This supersedes the
+  earlier full-run failure noted above; no production fix was needed during this validation.
+  The five skips remain opt-in network/slow cases.
+
+Reproduce with the project environment activated:
+
+```sh
+# Download/freeze once; the existing saved inputs make this step unnecessary for your review.
+python examples/validate_ticket12_real.py --download-only --osm-api
+python examples/validate_ticket12_real.py --offline --overwrite
+
+# Full ordinary regression suite (ROS/plugin isolation as in the earlier tests):
+PYTHONPATH= PYTEST_DISABLE_PLUGIN_AUTOLOAD=1 python -m pytest -q
+```
+
+Open `results/ticket12-male/validation_report.txt` first, then compare the two case reports.
+In QGIS overlay the clipped raster, boundary, analysis roads/nodes and sampled cell-to-node
+lines. README explains the fields and filtering. Generated inputs/results remain ignored;
+the reproducible validation runner is tracked. New recommendations are recorded in
+[plan/TEST_RECOMMENDATIONS.md](plan/TEST_RECOMMENDATIONS.md#12--population-weighting).
+
+This is a partial-city integration and snap-sensitivity experiment with current downloaded
+roads and modelled 2020 population. It does not validate census accuracy, city-scale resource
+limits, nearest-junction allocation as observed travel demand or globally optimal k=2 pairs.
+
+### Completion following manual review — 13 October 2026
+
+You requested that Ticket 12 be marked completed after reviewing the results and discussing
+the Malé reports. The checklist and ticket status now record completion, including the
+synthetic examples and real OSM/WorldPop validation with both snap limits. README and the
+testing backlog have been updated to match.
+
+Additional geographic, parameter-sensitivity, detailed QGIS and performance checks remain
+optional follow-up recommendations. Completion does not claim that every recommended
+experiment has been performed. No analysis code, results or test outcomes changed in this
+documentation update.

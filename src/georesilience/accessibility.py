@@ -33,7 +33,10 @@ class AccessibilityReducer:
     radius: float
 
     def __call__(self, distances, sources):
-        return _kernel(distances, sources, self.beta, self.radius) @ self.weights
+        kernel = _kernel(distances, sources, self.beta, self.radius)
+        if self.weights.ndim == 1:
+            return kernel @ self.weights
+        return np.column_stack([kernel @ column for column in self.weights.T])
 
 
 @dataclass
@@ -46,14 +49,17 @@ class ReverseBridgeReducer:
     def __call__(self, distances, sources):
         # Reverse rows from s give d(i,s); the destination mass is W_s.
         kernel = _kernel(distances, sources, self.beta, self.radius)
-        kernel *= self.weights[sources, None]
-        result = kernel.sum(axis=0)
+        if self.weights.ndim == 1:
+            result = (kernel * self.weights[sources, None]).sum(axis=0)
+        else:
+            result = np.column_stack([(kernel * column[sources, None]).sum(axis=0)
+                                      for column in self.weights.T])
         result[~self.outside] = 0.0
         return result
 
 
 def accessibility_baseline(active, weights, beta, radius, *, n_jobs, budget_bytes):
-    values = np.zeros(len(active.node_ids))
+    values = np.zeros(np.shape(weights))
     engine = removal_engine(active.csr(), n_jobs, budget_bytes)
     reducer = AccessibilityReducer(weights, beta, radius)
     with StageProgress("Accessibility baseline sources", len(values)) as progress:
@@ -66,7 +72,7 @@ def accessibility_baseline(active, weights, beta, radius, *, n_jobs, budget_byte
 
 def link_accessibility_loss(recompute, baseline, link_id, reducer):
     sources = recompute.affected_sources(link_id, limit=reducer.radius)
-    loss = np.zeros(len(baseline))
+    loss = np.zeros_like(baseline)
     for indices, changed in recompute.recompute([link_id], sources, reducer, limit=reducer.radius):
         loss[indices] = np.clip(baseline[indices] - changed, 0, baseline[indices])
     return loss, len(sources)
@@ -78,8 +84,9 @@ def bridge_accessibility_loss(recompute, link_id, reducer):
     n = len(reducer.weights)
     outside = np.ones(n, dtype=bool)
     outside[side] = False
-    loss = np.zeros(n)
-    forward = AccessibilityReducer(reducer.weights * outside, reducer.beta, reducer.radius)
+    loss = np.zeros_like(reducer.weights)
+    mask = outside if reducer.weights.ndim == 1 else outside[:, None]
+    forward = AccessibilityReducer(reducer.weights * mask, reducer.beta, reducer.radius)
     reverse = ReverseBridgeReducer(reducer.weights, outside, reducer.beta, reducer.radius)
     for graph, reduction, reversed_graph in ((recompute.graph, forward, False),
                                              (recompute.reverse, reverse, True)):
@@ -124,82 +131,10 @@ class AccessibilityResult:
     computation: dict
 
 
-def compute_accessibility(graph, links, screening, config, *, n_jobs, budget_bytes, weights=None):
-    started = perf_counter()
-    if n_jobs < 1 or budget_bytes < 1:
-        raise ValueError("accessibility jobs and memory budget must be positive")
-    active = ActiveEdgeGraph(graph, links, directed=True)
+def _accessibility_summary(active, masses, beta, radius, baseline, valid, node_metrics,
+                           link_metrics, ranked, evaluated, analytic, config, pair_trials):
     n = len(active.node_ids)
-    masses = node_weights(n, weights)
-    beta = math.log(2) / (config.half_distance_km * 1000)
-    radius = (config.half_distance_km * 1000) * config.cutoff_factor
-    # Baseline, top-three state, endpoint columns, losses and graph storage.
-    fixed_bytes = 160 * n + 64 * len(active.rows)
-    working_bytes = budget_bytes - fixed_bytes
-    row_bytes = max(1, n * 8 * 8)
-    if working_bytes < row_bytes:
-        raise ValueError("analysis.max_memory_gb is too small for accessibility working arrays")
-    jobs = min(n_jobs, max(1, n), max(1, working_bytes // row_bytes))
-    reducer = AccessibilityReducer(masses, beta, radius)
-    baseline = accessibility_baseline(active, masses, beta, radius, n_jobs=jobs, budget_bytes=working_bytes)
-    baseline_done = perf_counter()
     total = float(baseline.sum())
-    valid = baseline > 0
-    top = StreamingTopThree(valid)
-    eligible = {row["link_id"] for row in links if not row["is_self_loop"]}
-    evaluated = (eligible if config.all_links else
-                 eligible & (screening.candidate_links | screening.analytic_bridges))
-    analytic = evaluated & screening.analytic_bridges
-    recompute = AffectedSourceRecompute(active, n_jobs=jobs, budget_bytes=working_bytes)
-    link_metrics = {row["link_id"]: {"access_drop": math.nan, "access_rank": None,
-                    "access_method": "not_evaluated"} for row in links}
-    affected_count, small_side_rows = 0, 0
-    with StageProgress("Accessibility link removals", len(evaluated)) as progress:
-        for link_id in sorted(evaluated):
-            if link_id in analytic:
-                loss, size = bridge_accessibility_loss(recompute, link_id, reducer)
-                loss = np.clip(loss, 0, baseline)
-                small_side_rows += 2 * size
-                method = "analytic_bridge"
-            else:
-                loss, count = link_accessibility_loss(recompute, baseline, link_id, reducer)
-                affected_count += count
-                method = "affected_sources"
-            relative = np.divide(loss, baseline, out=np.zeros(n), where=valid)
-            top.update(link_id, relative)
-            link_metrics[link_id] = {"access_drop": float(np.clip(loss.sum() / total, 0, 1))
-                                     if total > 0 else math.nan,
-                                     "access_rank": None, "access_method": method}
-            progress.advance()
-    removals_done = perf_counter()
-    ranked = sorted((key for key in evaluated if math.isfinite(link_metrics[key]["access_drop"])),
-                    key=lambda key: (-link_metrics[key]["access_drop"], key))
-    for rank, key in enumerate(ranked, 1):
-        link_metrics[key]["access_rank"] = rank
-    node_metrics, top_links = {}, {}
-    pair_trials = 0
-    with StageProgress("Accessibility node pair tests", n if config.k == 2 else 0) as progress:
-        for index, node in enumerate(active.node_ids):
-            selected = [int(link) for link in top.links[index] if link >= 0]
-            top_links[node] = selected
-            has_single = valid[index] and bool(selected)
-            values = {"hansen_a": float(baseline[index]),
-                      "vuln": float(top.scores[index, 0]) if has_single else math.nan,
-                      "vuln_link_id": selected[0] if has_single else None,
-                      "isolated_in_R": not bool(valid[index]),
-                      "access_top3_link_ids": ";".join(map(str, selected))}
-            if config.k == 2:
-                best, winning = math.nan, None
-                for pair in combinations(selected, 2):
-                    for _, changed in recompute.recompute(pair, np.array([index]), reducer, limit=radius):
-                        drop = float(np.clip((baseline[index] - changed[0]) / baseline[index], 0, 1))
-                    if winning is None or drop > best:
-                        best, winning = drop, pair
-                    pair_trials += 1
-                values.update(vuln_k2=best, vuln_k2_link_ids=";".join(map(str, winning)) if winning else None)
-                progress.advance()
-            node_metrics[node] = values
-    finished = perf_counter()
     vulnerability = describe([row["vuln"] for row in node_metrics.values()])
     node_order = {node: index for index, node in enumerate(active.node_ids)}
     ranked_nodes = sorted((node for node, row in node_metrics.items() if math.isfinite(row["vuln"])),
@@ -225,12 +160,126 @@ def compute_accessibility(graph, links, screening, config, *, n_jobs, budget_byt
                                  "vuln_link_id": node_metrics[node]["vuln_link_id"]} for node in ranked_nodes[:20]]}
     if config.k == 2:
         summary["vuln_k2"] = describe([row["vuln_k2"] for row in node_metrics.values()])
-    return AccessibilityResult(node_metrics, link_metrics, summary, top_links,
+    return summary
+
+
+def compute_accessibility(graph, links, screening, config, *, n_jobs, budget_bytes, weights=None,
+                          population_weights=None):
+    started = perf_counter()
+    if n_jobs < 1 or budget_bytes < 1:
+        raise ValueError("accessibility jobs and memory budget must be positive")
+    active = ActiveEdgeGraph(graph, links, directed=True)
+    n = len(active.node_ids)
+    masses = node_weights(n, weights)
+    columns = [masses]
+    if population_weights is not None:
+        columns.append(node_weights(n, population_weights))
+    joint = np.column_stack(columns)
+    variants = len(columns)
+    beta = math.log(2) / (config.half_distance_km * 1000)
+    radius = (config.half_distance_km * 1000) * config.cutoff_factor
+    fixed_bytes = 160 * n * variants + 64 * len(active.rows)
+    working_bytes = budget_bytes - fixed_bytes
+    row_bytes = max(1, n * 8 * 8)
+    if working_bytes < row_bytes:
+        raise ValueError("analysis.max_memory_gb is too small for accessibility working arrays")
+    jobs = min(n_jobs, max(1, n), max(1, working_bytes // row_bytes))
+    reducer = AccessibilityReducer(joint, beta, radius)
+    baseline = accessibility_baseline(active, joint, beta, radius, n_jobs=jobs, budget_bytes=working_bytes)
+    baseline_done = perf_counter()
+    totals = baseline.sum(axis=0)
+    valid = baseline > 0
+    tops = [StreamingTopThree(valid[:, c]) for c in range(variants)]
+    eligible = {row["link_id"] for row in links if not row["is_self_loop"]}
+    evaluated = (eligible if config.all_links else
+                 eligible & (screening.candidate_links | screening.analytic_bridges))
+    analytic = evaluated & screening.analytic_bridges
+    recompute = AffectedSourceRecompute(active, n_jobs=jobs, budget_bytes=working_bytes)
+    metrics = [{row["link_id"]: {"access_drop": math.nan, "access_rank": None,
+                "access_method": "not_evaluated"} for row in links} for c in range(variants)]
+    affected_count, small_side_rows = 0, 0
+    with StageProgress("Accessibility link removals", len(evaluated)) as progress:
+        for link_id in sorted(evaluated):
+            if link_id in analytic:
+                loss, size = bridge_accessibility_loss(recompute, link_id, reducer)
+                loss = np.clip(loss, 0, baseline)
+                small_side_rows += 2 * size
+                method = "analytic_bridge"
+            else:
+                loss, count = link_accessibility_loss(recompute, baseline, link_id, reducer)
+                affected_count += count
+                method = "affected_sources"
+            relative = np.divide(loss, baseline, out=np.zeros_like(loss), where=valid)
+            for c in range(variants):
+                tops[c].update(link_id, relative[:, c])
+                metrics[c][link_id] = {"access_drop": float(np.clip(loss[:, c].sum() / totals[c], 0, 1))
+                                      if totals[c] > 0 else math.nan,
+                                      "access_rank": None, "access_method": method}
+            progress.advance()
+    removals_done = perf_counter()
+    rankings = []
+    for link_metrics in metrics:
+        ranked = sorted((key for key in evaluated if math.isfinite(link_metrics[key]["access_drop"])),
+                        key=lambda key: (-link_metrics[key]["access_drop"], key))
+        for rank, key in enumerate(ranked, 1):
+            link_metrics[key]["access_rank"] = rank
+        rankings.append(ranked)
+    nodes = [{} for c in range(variants)]
+    top_links = {}
+    pair_trials = [0] * variants
+    shared_pair_trials = 0
+    with StageProgress("Accessibility node pair tests", n if config.k == 2 else 0) as progress:
+        for index, node in enumerate(active.node_ids):
+            selections = [[int(link) for link in top.links[index] if link >= 0] for top in tops]
+            top_links[node] = selections[0]
+            pairs = [list(combinations(selected, 2)) for selected in selections]
+            pair_values = {}
+            if config.k == 2:
+                # Union the two top-three searches: shared pairs require only one traversal.
+                for pair in sorted({tuple(sorted(pair)) for group in pairs for pair in group}):
+                    for _, changed in recompute.recompute(pair, np.array([index]), reducer, limit=radius):
+                        drops = np.divide(baseline[index] - changed[0], baseline[index],
+                                          out=np.full(variants, np.nan), where=valid[index])
+                    pair_values[pair] = np.clip(drops, 0, 1)
+                    shared_pair_trials += 1
+            for c, selected in enumerate(selections):
+                has_single = valid[index, c] and bool(selected)
+                values = {"hansen_a": float(baseline[index, c]),
+                          "vuln": float(tops[c].scores[index, 0]) if has_single else math.nan,
+                          "vuln_link_id": selected[0] if has_single else None,
+                          "isolated_in_R": not bool(valid[index, c]),
+                          "access_top3_link_ids": ";".join(map(str, selected))}
+                if config.k == 2:
+                    winning = (max(pairs[c], key=lambda pair: pair_values[tuple(sorted(pair))][c])
+                               if pairs[c] else None)
+                    values.update(vuln_k2=float(pair_values[tuple(sorted(winning))][c]) if winning else math.nan,
+                                  vuln_k2_link_ids=";".join(map(str, winning)) if winning else None)
+                    pair_trials[c] += len(pairs[c])
+                nodes[c][node] = values
+            if config.k == 2:
+                progress.advance()
+    finished = perf_counter()
+    summaries = [_accessibility_summary(active, columns[c], beta, radius, baseline[:, c], valid[:, c],
+                 nodes[c], metrics[c], rankings[c], evaluated, analytic, config, pair_trials[c])
+                 for c in range(variants)]
+    summary = summaries[0]
+    if variants == 2:
+        for node in active.node_ids:
+            nodes[0][node].update({key + "_pop": value for key, value in nodes[1][node].items()})
+        for link_id in metrics[0]:
+            metrics[0][link_id].update({key + "_pop": value for key, value in metrics[1][link_id].items()
+                                       if key != "access_method"})
+        for key in ("total_accessibility", "mean_accessibility", "vuln", "vuln_k2", "destination_mass_total",
+                    "isolated_in_R_count", "undefined_vulnerability_count", "k2_pair_trials", "top20_links", "top20_nodes"):
+            if key in summaries[1]:
+                summary[key + "_pop"] = summaries[1][key]
+        summary["population_origin_aggregation"] = "unweighted sum of A_i; population weights destinations only"
+    return AccessibilityResult(nodes[0], metrics[0], summary, top_links,
         {"accessibility_baseline": baseline_done - started, "accessibility_links": removals_done - baseline_done,
          "accessibility_pairs": finished - removals_done, "accessibility_total": finished - started},
         {"accessibility_workers": int(jobs), "accessibility_fixed_bytes_estimate": fixed_bytes,
          "accessibility_affected_source_rows": affected_count, "accessibility_analytic_source_rows": small_side_rows,
-         "accessibility_top_links_per_node": 3})
+         "accessibility_top_links_per_node": 3, "accessibility_shared_pair_trials": shared_pair_trials})
 
 
 def accessibility_report(summary):
@@ -250,6 +299,17 @@ def accessibility_report(summary):
                       f"Pair trials: {summary['k2_pair_trials']}; vuln_k2 mean: {summary['vuln_k2']['mean']}; "
                       f"p90: {summary['vuln_k2']['p90']}",
                       "vuln_k2 is undefined when fewer than two evaluated links are available."])
+    if "total_accessibility_pop" in summary:
+        lines.extend([f"Population-weighted total A: {summary['total_accessibility_pop']:.9g}; "
+                      f"mean A: {summary['mean_accessibility_pop']}",
+                      f"vuln_pop mean: {summary['vuln_pop']['mean']}; p90: {summary['vuln_pop']['p90']}",
+                      "Population weights destinations only; network accessibility sums origins uniformly."])
+        if summary["k"] == 2:
+            lines.append(f"vuln_k2_pop mean: {summary['vuln_k2_pop']['mean']}; "
+                         "population-specific top-three links define the pair search.")
+        lines.append("Top population accessibility links: link_id | access_drop_pop | access_rank_pop")
+        lines.extend(f"{row['link_id']} | {row['access_drop']:.9g} | {row['access_rank']}"
+                     for row in summary["top20_links_pop"])
     lines.extend(["Top 20 critical accessibility links: link_id | access_drop | access_rank | method"])
     lines.extend(f"{row['link_id']} | {row['access_drop']:.9g} | {row['access_rank']} | {row['access_method']}"
                  for row in summary["top20_links"])
