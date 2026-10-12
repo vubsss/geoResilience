@@ -1,6 +1,7 @@
 """Directed travel-time reliability with replaceable, additive edge-time models."""
 
 import math
+from contextlib import contextmanager
 from dataclasses import dataclass
 from pathlib import Path
 from tempfile import TemporaryDirectory
@@ -101,44 +102,54 @@ class _TimeBatch:
     histogram: np.ndarray
 
 
+@contextmanager
+def _baseline_map(path, shape, mode):
+    baseline = np.memmap(path, dtype=np.float64, mode=mode, shape=shape)
+    try:
+        yield baseline
+    finally:
+        # Tracebacks and array views can retain the mapping after del baseline.
+        # Close it explicitly so Windows can remove the temporary file on errors.
+        baseline._mmap.close()
+
+
 def _time_batch(topology, probabilities, origins, sampled_count, pairs, baseline_path,
                 chunk_rows, tau, seed, sample_start, samples):
     rng = np.random.default_rng(seed)
     n = len(topology.node_ids)
-    baseline = np.memmap(baseline_path, dtype=np.float64, mode="r", shape=(len(origins), n))
-    result = _TimeBatch(np.empty(samples), np.zeros(sampled_count), np.zeros(sampled_count),
-                        np.zeros(len(pairs), dtype=np.int64), np.zeros(len(HIST_EDGES)-1, dtype=np.int64))
-    pairs_by_origin = {}
-    for index, row in enumerate(pairs):
-        pairs_by_origin.setdefault(row["_origin"], []).append((index, row["_dest"]))
-    for sample in range(samples):
-        up = rng.random(len(probabilities)) >= probabilities
-        graph = topology.csr(up, sample_start+sample)
-        successes = 0
-        for start in range(0, len(origins), chunk_rows):
-            end = min(len(origins), start+chunk_rows)
-            source_ids = origins[start:end]
-            damaged = dijkstra(graph, directed=True, indices=source_ids)
-            intact = baseline[start:end]
-            okay = time_success(intact, damaged, tau)
-            # Explicit OD self-pairs succeed; self-pairs never inflate network scores.
-            for row_index, origin in enumerate(source_ids):
-                for od_index, dest in pairs_by_origin.get(int(origin), ()):
-                    result.od_counts[od_index] += bool(okay[row_index, dest])
-                okay[row_index, origin] = False
-            count = min(end, sampled_count)-start
-            if count > 0:
-                values = okay[:count].sum(axis=1)/(n-1) if n > 1 else np.zeros(count)
-                successes += int(okay[:count].sum())
-                result.origin_sum[start:start+count] += values
-                result.origin_square[start:start+count] += values*values
-                base, changed = intact[:count], damaged[:count]
-                valid = np.isfinite(base) & np.isfinite(changed) & (base > 0)
-                with np.errstate(over="ignore", invalid="ignore"):
-                    ratios = changed[valid]/base[valid]
-                result.histogram += np.histogram(ratios, bins=HIST_EDGES)[0]
-        result.fractions[sample] = successes/(sampled_count*(n-1)) if n > 1 else math.nan
-    del baseline
+    with _baseline_map(baseline_path, (len(origins), n), "r") as baseline:
+        result = _TimeBatch(np.empty(samples), np.zeros(sampled_count), np.zeros(sampled_count),
+                            np.zeros(len(pairs), dtype=np.int64), np.zeros(len(HIST_EDGES)-1, dtype=np.int64))
+        pairs_by_origin = {}
+        for index, row in enumerate(pairs):
+            pairs_by_origin.setdefault(row["_origin"], []).append((index, row["_dest"]))
+        for sample in range(samples):
+            up = rng.random(len(probabilities)) >= probabilities
+            graph = topology.csr(up, sample_start+sample)
+            successes = 0
+            for start in range(0, len(origins), chunk_rows):
+                end = min(len(origins), start+chunk_rows)
+                source_ids = origins[start:end]
+                damaged = dijkstra(graph, directed=True, indices=source_ids)
+                intact = baseline[start:end]
+                okay = time_success(intact, damaged, tau)
+                # Explicit OD self-pairs succeed; self-pairs never inflate network scores.
+                for row_index, origin in enumerate(source_ids):
+                    for od_index, dest in pairs_by_origin.get(int(origin), ()):
+                        result.od_counts[od_index] += bool(okay[row_index, dest])
+                    okay[row_index, origin] = False
+                count = min(end, sampled_count)-start
+                if count > 0:
+                    values = okay[:count].sum(axis=1)/(n-1) if n > 1 else np.zeros(count)
+                    successes += int(okay[:count].sum())
+                    result.origin_sum[start:start+count] += values
+                    result.origin_square[start:start+count] += values*values
+                    base, changed = intact[:count], damaged[:count]
+                    valid = np.isfinite(base) & np.isfinite(changed) & (base > 0)
+                    with np.errstate(over="ignore", invalid="ignore"):
+                        ratios = changed[valid]/base[valid]
+                    result.histogram += np.histogram(ratios, bins=HIST_EDGES)[0]
+            result.fractions[sample] = successes/(sampled_count*(n-1)) if n > 1 else math.nan
     return result
 
 
@@ -201,23 +212,22 @@ def compute_travel_time(graph, links, config, reliability_config, user_probabili
     baseline_unreachable, od_baseline = 0, {}
     with TemporaryDirectory(prefix="georesilience-times-") as temporary:
         baseline_path = Path(temporary)/"baseline.bin"
-        baseline = np.memmap(baseline_path, dtype=np.float64, mode="w+", shape=(len(origins), n))
-        intact = topology.csr(np.ones(len(topology.link_ids), dtype=bool))
-        with StageProgress("Travel-time baseline origins", len(origins)) as progress:
-            for start in range(0, len(origins), chunk_rows):
-                end = min(len(origins), start+chunk_rows)
-                baseline[start:end] = dijkstra(intact, directed=True, indices=origins[start:end])
-                count = min(end, len(sampled))-start
-                if count > 0:
-                    baseline_unreachable += int((~np.isfinite(baseline[start:start+count])).sum())
-                for origin in origins[start:end]:
-                    progress.advance()
-        positions = {int(origin): index for index, origin in enumerate(origins)}
-        for row in od_inputs.pairs:
-            value = baseline[positions[row["_origin"]], row["_dest"]]
-            od_baseline[row["label"]] = float(value/60) if math.isfinite(value) else None
-        baseline.flush()
-        del baseline
+        with _baseline_map(baseline_path, (len(origins), n), "w+") as baseline:
+            intact = topology.csr(np.ones(len(topology.link_ids), dtype=bool))
+            with StageProgress("Travel-time baseline origins", len(origins)) as progress:
+                for start in range(0, len(origins), chunk_rows):
+                    end = min(len(origins), start+chunk_rows)
+                    baseline[start:end] = dijkstra(intact, directed=True, indices=origins[start:end])
+                    count = min(end, len(sampled))-start
+                    if count > 0:
+                        baseline_unreachable += int((~np.isfinite(baseline[start:start+count])).sum())
+                    for origin in origins[start:end]:
+                        progress.advance()
+            positions = {int(origin): index for index, origin in enumerate(origins)}
+            for row in od_inputs.pairs:
+                value = baseline[positions[row["_origin"]], row["_dest"]]
+                od_baseline[row["label"]] = float(value/60) if math.isfinite(value) else None
+            baseline.flush()
 
         def collect(results):
             offset = 0

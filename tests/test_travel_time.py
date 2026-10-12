@@ -377,3 +377,30 @@ def test_all_closed_singleton_and_time_model_contract_limits():
                                      lambda context: costs if context.sample_index is None else dict.fromkeys(costs, 0))
     with pytest.raises(ValueError, match="strictly positive"):
         compute(graph, provider=InvalidScenario())
+
+
+@pytest.mark.parametrize("fail_on_call", [1, 3])
+def test_temporary_baseline_cleanup_preserves_routing_error(tmp_path, monkeypatch, fail_on_call):
+    from tempfile import TemporaryDirectory
+    import georesilience.travel_time as module
+
+    monkeypatch.setattr(module, "TemporaryDirectory",
+                        lambda **kwargs: TemporaryDirectory(dir=tmp_path, **kwargs))
+    original = module.dijkstra
+    calls = 0
+
+    def interrupted(*args, **kwargs):
+        nonlocal calls
+        calls += 1
+        if calls == fail_on_call:
+            raise RuntimeError("controlled routing failure")
+        return original(*args, **kwargs)
+
+    monkeypatch.setattr(module, "dijkstra", interrupted)
+    graph = roads([(0, 1, 1000, 60, True)])
+    # Fail while writing the baseline, or after a sample has retained its views.
+    # The routing error must survive cleanup, including Windows file locking.
+    with pytest.raises(RuntimeError, match="controlled routing failure"):
+        compute(graph, samples=16)
+    assert calls == fail_on_call
+    assert list(tmp_path.iterdir()) == []

@@ -145,6 +145,22 @@ class PopulationConfig(StrictModel):
         return self
 
 
+class ZonesConfig(StrictModel):
+    path: Path | None = None
+    id_field: str | None = None
+    name_field: str | None = None
+
+    @model_validator(mode="after")
+    def validate_fields(self):
+        if self.path is not None and self.id_field is None:
+            raise ValueError("zones.id_field is required when zones.path is set")
+        for key in ("id_field", "name_field"):
+            value = getattr(self, key)
+            if value is not None and not value.strip():
+                raise ValueError(f"zones.{key} must be nonempty")
+        return self
+
+
 class RunConfig(StrictModel):
     input: InputConfig
     network: NetworkConfig = Field(default_factory=NetworkConfig)
@@ -156,6 +172,7 @@ class RunConfig(StrictModel):
     travel_time: TravelTimeConfig = Field(default_factory=TravelTimeConfig)
     accessibility: AccessibilityConfig = Field(default_factory=AccessibilityConfig)
     population: PopulationConfig = Field(default_factory=PopulationConfig)
+    zones: ZonesConfig = Field(default_factory=ZonesConfig)
     output: OutputConfig = Field(default_factory=OutputConfig)
 
     @model_validator(mode="after")

@@ -13,6 +13,34 @@ FIGURE_FILENAMES = ("degree_hist.png", *(f"{name}_ccdf.png" for name in NODE_MEA
 POPULATION_FIGURES = ("population_map.png",)
 
 
+def write_zones_figure(zones, links, folder):
+    import matplotlib.pyplot as plt
+    from matplotlib.patches import Patch
+
+    folder.mkdir(parents=True, exist_ok=True)
+    fig, ax = _critical_map_canvas(zones)
+    zones.plot(ax=ax, color="lightgrey", edgecolor="white", linewidth=.7)
+    finite = zones[zones.rank_vulnerability.notna()].copy()
+    if not finite.empty:
+        finite["rank_vulnerability"] = finite.rank_vulnerability.astype(float)
+        finite.plot(ax=ax, column="rank_vulnerability", cmap="YlOrRd_r", edgecolor="white", linewidth=.7,
+                    vmin=1, vmax=max(2, float(finite.rank_vulnerability.max())),
+                    legend=True, legend_kwds={"label": "Vulnerability rank (1 = most vulnerable)", "shrink": .65})
+    if not links.empty:
+        bounds = zones.total_bounds
+        # Roads provide context without extending the map beyond the supplied zones.
+        links.cx[bounds[0]:bounds[2], bounds[1]:bounds[3]].plot(ax=ax, color="#aaaaaa", linewidth=.35)
+    if zones.rank_vulnerability.isna().any():
+        ax.legend(handles=[Patch(facecolor="lightgrey", label="Vulnerability undefined")], loc="lower right")
+    if finite.empty:
+        ax.text(.5, .98, "No defined zone vulnerability", ha="center", va="top", transform=ax.transAxes)
+    ax.set_title("Zone vulnerability: aggregation of network results")
+    ax.set_aspect("equal")
+    ax.set_axis_off()
+    fig.savefig(folder / "zones_vulnerability_map.png", bbox_inches="tight", dpi=180)
+    plt.close(fig)
+
+
 def _critical_map_canvas(links):
     import matplotlib.pyplot as plt
 

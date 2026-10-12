@@ -4,7 +4,8 @@ GeoResilience analyzes road network structure and resilience. Tickets 01–11 pr
 cleaning, physical road links, exact centralities, redundancy screening, single-road damage,
 information centrality, cumulative attack/failure experiments, distribution classification,
 per-event road failure probabilities, Monte Carlo connectivity and travel-time reliability,
-distance-decayed Hansen accessibility and auditable outputs. Ticket 15 adds a four-city
+distance-decayed Hansen accessibility and auditable outputs. Ticket 12 adds optional population
+weighting; Ticket 13 adds optional zone aggregation. Ticket 15 adds a four-city
 qualitative comparison with AP2, including
 an explicit reference using the paper's spatial efficiency. Later analysis tickets are
 tracked in [TICKET_UPDATES.md](TICKET_UPDATES.md).
@@ -2107,3 +2108,104 @@ The runner's generated YAMLs describe normal bbox acquisition. Running them dire
 `georesilience run` downloads current OSM roads and may change the graph. Use the `--offline`
 runner above for an exact repeat of the frozen experiment. Further validation recommendations
 remain in [plan/TEST_RECOMMENDATIONS.md](plan/TEST_RECOMMENDATIONS.md#12--population-weighting).
+
+## Zone aggregation (Ticket 13)
+
+Zones summarize the finished network analysis. They do not clip the graph, restrict routes,
+change closure candidates or alter any network-level metric or random sample. Supply polygons:
+
+```yaml
+zones:
+  path: data/wards.gpkg       # GeoJSON or GeoPackage polygons with a declared CRS
+  id_field: ward_id           # required; unique, non-null IDs
+  name_field: ward_name       # optional
+```
+
+The file is reprojected to the graph's metre CRS and validated before expensive analysis or
+replacement of existing outputs. Empty, invalid and non-polygon geometries, duplicate/blank IDs,
+missing fields and positive-area overlaps raise errors. Adjacent borders are allowed. IDs are
+exported as strings; numeric IDs sort numerically, with text breaking numeric ties. Names can be
+missing. Zones may extend outside the study area; their full polygon areas are retained.
+
+Nodes are assigned by their point geometry. Roads are assigned by the half-length point along
+their actual geometry, including curved roads; this is not the average of endpoint coordinates.
+Points on outer borders are included. Shared-border ties choose the lowest sorted zone ID, so
+changing feature order does not change assignment. Polygon holes exclude interior points.
+Nodes/roads outside every polygon have null `zone_id` and are counted in the report/summary.
+
+`zones.gpkg`, layer `zones`, contains every supplied polygon, including empty zones:
+
+| Fields | Definition |
+| --- | --- |
+| `n_nodes`, `n_links`, `road_km` | Assigned nodes and non-loop physical roads; reciprocal arcs count once |
+| `area_km2`, `road_density_km_per_km2` | Full projected polygon area; assigned road kilometres / area |
+| `population`, `road_km_per_1000_pop` | Sum of allocated node population; road km per 1,000 allocated residents |
+| `bridge_km_frac` | Assigned physical bridge length / assigned non-loop road length |
+| `mean_p_connected`, `pop_weighted_p_connected` | Main-SCC membership averaged over nodes, or weighted by resident population |
+| `mean_hansen_a`, `mean_hansen_a_pop` | Means of existing structural or population-destination Hansen scores |
+| `mean_vuln`, `pop_weighted_vuln`, `p90_vuln` | Structural `vuln`: mean, resident-population-weighted mean, and 90th percentile |
+| `expected_pop_cut_off` | Sum of `population * (1 - p_connected)` over assigned nodes |
+| `n_top50_critical_links`, `n_top50_access_links` | Counts by network-wide `crit_rank` / `access_rank` <= 50 |
+| `rank_vulnerability` | Descending population-weighted vulnerability when population is enabled; otherwise structural mean |
+
+`pop_weighted_vuln` uses `sum(population * vuln) / sum(population)` over finite structural scores
+with positive population. It describes resident-weighted structural losses. It is distinct from
+`vuln_pop`, which changes Hansen destination masses. `mean_hansen_a_pop` still averages origins
+uniformly, matching Ticket 12. These conventions are recorded in `summary.json.zones`.
+
+Means/percentiles omit nonfinite source scores. Weighted means omit nodes with missing scores
+and use only their contributing population in the denominator. `n_valid_vuln`,
+`n_valid_p_connected`, `vuln_population_coverage_frac` and
+`connected_population_coverage_frac` expose that coverage. Absolute expected population cut off
+is null if any positive-population node lacks `p_connected`, so incomplete data never silently
+underestimate the total. Its definition retains the largest SCC by node count and its ID tie break.
+
+Population-off fields, zero-denominator ratios and unavailable metrics are null. Empty zones have
+zero inventory (and zero population when enabled) but undefined means/ranks. Zero-population
+zones remain unranked under population weighting; no silent fallback changes the ranking basis.
+Rank ties use zone ID. Missing top-link ranks throughout the network give unavailable counts,
+rather than evidence that there are zero critical roads. Self-loops retain a zone assignment in
+the edges layer but are excluded from all zone road metrics, as from network analysis.
+
+Entire road lengths follow their midpoint's zone; roads are not split at borders. Consequently
+road density is an inventory approximation, not polygon-clipped road length. Assigned totals plus
+unassigned totals reconcile to non-loop network road length and allocated node population.
+Population assigned to a ward is not an independent census/raster total for that ward. Raster
+cells unallocated by Ticket 12 never enter zone population. A partial study area can leave part
+of a supplied ward uncovered, so inspect coverage before comparing full-ward densities.
+
+As geographic context, [Samal, Nayak and Prakash (2025), section 4.1](https://doi.org/10.1007/s44327-025-00161-4)
+report Hyderabad ward road densities of 7-47 km/km2. This is a sanity comparison, not an acceptance
+threshold: road filters, boundary/data vintage, largest-component retention and midpoint assignment
+differ. Road density alone is not a flood-risk or resilience score.
+
+Other outputs are `zone_id` in both `network.gpkg` layers, `summary.json.zones` with top/bottom
+10 ranked zones and unassigned counts/length/population, the **Zones** report section, resolved
+zone settings, and `figures/zones_vulnerability_map.png` when figures are enabled. Rank 1 is most
+vulnerable (red); undefined zones are grey. Rankings inherit candidate-only closure coverage unless
+the underlying accessibility analysis evaluates all links. A zone's vulnerability is an average
+of node-specific worst closures, not the effect of one simultaneous zone-wide disruption.
+
+With `zones.path: null`, no zone file, columns, summary section or map is produced. Overwrite
+cleans old zone artifacts when zones or figures are disabled. Other supplied files are preserved.
+
+From the repository root, with the project environment active:
+
+```sh
+python examples/create_ticket13_demo.py
+python -m pytest -q tests/test_zones.py
+georesilience run --config data/ticket13-demo/uniform.yaml --out results/ticket13-cli --overwrite
+```
+
+The demo generates a nine-node grid, adjacent West/East polygons, an empty third zone, and a
+synthetic 3x3 count raster. It runs both uniform and population cases in
+`results/ticket13-demo/`. West/East have 6/3 nodes and 1.0/0.2 road km; population is 27/18.
+The manifest checks these inventories. Population execution substitutes only bbox acquisition;
+real cleaning, allocation and metric stages run. Its bbox YAML downloads real roads when run
+directly through the CLI, so use the demo script to repeat the controlled population example.
+The uniform GraphML YAML runs offline directly through the CLI.
+
+For manual review, open both `zones.gpkg` files and `network.gpkg` in QGIS. Compare node/link
+assignments, inspect the empty zone's null rank, check population and road totals against
+`data/ticket13-demo/manifest.json`, and review the report tables and choropleths. These are
+software examples, not actual Hyderabad wards, observed closure probabilities or census data.

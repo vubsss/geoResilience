@@ -4,7 +4,7 @@
 
 **Blocked by:** 12
 
-**Status:** ready-for-agent
+**Status:** implemented and automatically verified (13 October 2026); manual review pending
 
 ## Behaviour
 
@@ -42,8 +42,16 @@ zones:
 - The ward road density (`road_km` / zone area in km²) is included as a column. The README mentions the sanity check against the 7–47 km/km² range in Samal et al. (2025) for Hyderabad.
 
 ## Acceptance criteria
-- [ ] Fixture: 2 square zones over a small grid graph. Node and link counts, `road_km` and population sums per zone match hand computation.
-- [ ] Overlapping zones raise an error. A missing `id_field` raises an error.
-- [ ] Nodes outside all zones are counted and reported, and the run does not crash.
-- [ ] Running without zones produces no `zones.gpkg` and no `zone_id` columns.
-- [ ] Outputs (gpkg, summary, report, figure) are present.
+- [x] Fixture: 2 square zones over a small grid graph. Node and link counts, `road_km` and population sums per zone match hand computation.
+- [x] Overlapping zones raise an error. A missing `id_field` raises an error.
+- [x] Nodes outside all zones are counted and reported, and the run does not crash.
+- [x] Running without zones produces no `zones.gpkg` and no `zone_id` columns.
+- [x] Outputs (gpkg, summary, report, figure) are present.
+
+
+Implementation and evidence: [ticket log](../../TICKET_UPDATES.md#current-ticket-13--zone-aggregation),
+[zone tests](../../tests/test_zones.py) and [offline demo](../../examples/create_ticket13_demo.py).
+Shared boundaries use inclusive assignment with canonical ID ties. `pop_weighted_vuln` weights
+structural node `vuln` by resident population; it is distinct from destination-weighted `vuln_pop`.
+Self-loops are assigned but excluded from physical road aggregates. See README for null/coverage
+rules, midpoint length assignment and manual review instructions.

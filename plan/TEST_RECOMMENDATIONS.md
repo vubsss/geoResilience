@@ -253,14 +253,26 @@ CRS alignment and allocation on actual roads; neither establishes census accurac
   at compatible dates and geography. Do not treat a plausible overlay or a conserved total
   as validation of WorldPop estimates or of nearest-junction allocation as a demand model.
 
-## 13 — Zone aggregation (prospective)
+## 13 — Zone aggregation
 
-- [ ] Include adjacent polygons, holes, multipolygons, boundary nodes, duplicate IDs and positive-area
+- [x] Include adjacent polygons, holes, multipolygons, boundary nodes, duplicate IDs and positive-area
   overlaps; establish deterministic boundary assignment without rejecting valid shared borders.
-- [ ] Independently check zone sums, weighted means and zero-population/empty-zone handling.
+- [x] Independently check zone sums, weighted means and zero-population/empty-zone handling.
   Account explicitly for unassigned nodes/roads when comparing zone totals with network totals.
-- [ ] Add/remove/reproject zones and verify all network-level analysis values stay unchanged.
+- [x] Add/remove/reproject zones and verify all network-level analysis values stay unchanged.
   Check that midpoint assignment can differ from geometric road-length apportionment.
+
+Implemented and automatically verified on 13 October 2026; manual review pending.
+Evidence: `tests/test_zones.py` (21 passed), `examples/create_ticket13_demo.py`,
+`data/ticket13-demo/manifest.json` and both outputs in `results/ticket13-demo/`.
+Independent scalar fixtures cover sums, ratios, means, percentiles, missing scores and rankings.
+Pipeline tests prove invariance with population off/on and after reprojection/removal of zones.
+Curved/multipart fixtures verify whole stored road length follows the geometry midpoint, even
+when portions lie in other zones. Both generated maps were visually inspected.
+
+- [ ] Optional: repeat on a frozen real ward partition with a suitably covered road extract;
+  inspect boundary assignments and partial-study coverage in QGIS, and record runtime/memory.
+  The synthetic checks do not establish city-scale performance or actual ward population accuracy.
 
 ## 14 — Scorecard and report (prospective)
 

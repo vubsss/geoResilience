@@ -12,7 +12,7 @@
 - [x] **10 — Travel-time reliability** — completed, tested and manually verified by you. Includes replaceable time models, exact route examples and a sparse spatial network; further validation recommendations documented.
 - [x] **11 — Hansen accessibility (uniform masses)** — completed, tested and manually verified by you on 12 October 2026, using the plan's exponential distance-decay definition.
 - [x] **12 — WorldPop population** — completed, tested and accepted by you after manual review on 13 October 2026. Includes real Malé roads/WorldPop and 100 m/500 m snap comparison. Full offline suite: 300 passed, 5 skipped.
-- [ ] **13 — Zone aggregation** — not started.
+- [x] **13 — Zone aggregation** — implemented and automatically verified on 13 October 2026; manual review pending. Includes deterministic spatial assignment, population aggregates, zone exports/report/map and offline demos.
 - [ ] **14 — Scorecard and final report** — not started.
 - [ ] **15 — Crucitti comparison** — implemented, tested and manually reviewed, including modern OSM sensitivity/inspection and the authors' published historical graphs. Historical data: 2/4 information and 3/4 betweenness matches under both conventions; MISMATCH. Planned-city classification discrepancy remains open.
 - [ ] **16 — Ada runbook** — not started.
@@ -2168,3 +2168,64 @@ Additional geographic, parameter-sensitivity, detailed QGIS and performance chec
 optional follow-up recommendations. Completion does not claim that every recommended
 experiment has been performed. No analysis code, results or test outcomes changed in this
 documentation update.
+
+
+## Current Ticket 13 — Zone aggregation
+
+Implemented on **13 October 2026** within the mid-evaluation scope. Automatic checks are
+complete for Ticket 13; **manual review has not yet been recorded**. Ticket 14 remains not started.
+
+### Implementation
+
+- Added optional `zones.path`, required `id_field` and optional `name_field`. GeoJSON/GPKG
+  polygons are reprojected to the graph's metre CRS. Missing fields/CRS/files, empty/invalid
+  geometry, duplicate/null/blank IDs and positive-area overlaps fail before expensive analysis
+  or deletion of existing outputs. Shared borders are valid.
+- Assignment is inclusive point-in-polygon for nodes and the actual geometry half-length point
+  for roads, including multipart/curved roads. Shared-border ties use canonical zone-ID order;
+  numeric IDs sort numerically. Holes, unassigned features and empty zones are supported.
+- Aggregation consumes finished node/physical-link layers and never changes routing, closure
+  candidates, random samples or network metrics. Non-loop physical roads count once; loops
+  receive assignments but are excluded from road totals, densities and top-link counts.
+- Exported every specified zone metric, road density, assigned/unassigned reconciliation,
+  contributing-score/population coverage and deterministic vulnerability ranks. Resident-weighted
+  structural `vuln` is distinct from destination-weighted `vuln_pop`. Missing metrics and
+  zero-denominator quantities remain null; zero-population zones are unranked when population
+  weighting is active. Expected population cut off is undefined if a positive-population node
+  lacks its connectivity membership probability.
+- Added `zones.gpkg`, `zone_id` in network layers, `summary.json.zones`, top/bottom-ten report
+  tables, resolved config and optional `zones_vulnerability_map.png`. Turning zones/figures off
+  with overwrite removes stale zone artifacts. README documents definitions, coverage, midpoint
+  approximation and the cited Hyderabad road-density sanity comparison.
+
+### Validation
+
+- **21 zone tests passed** in `tests/test_zones.py`: independent scalar arithmetic,
+  population-off/on, missing scores, zero/empty zones, CRS reprojection, GeoJSON/GPKG roundtrip,
+  shared borders, holes, multipolygons, overlaps/invalid inputs, stable IDs/ties, curved/multipart
+  midpoint assignment, parallel roads, loop exclusions, unassigned totals and top/bottom ten.
+- End-to-end tests compare every non-zone node/link field and network summary with zones off/on;
+  population-weighted and uniform results stay identical. Zone expected population cut off
+  sums to the network value. Long/non-ASCII names preserve JSON/GPKG names and produce an ASCII
+  report at most 100 columns wide. Invalid-zone overwrite preserves existing results.
+- `examples/create_ticket13_demo.py` completed both controlled nine-node runs. West/East have
+  6/3 nodes, 1.0/0.2 road km and, in the population case, 27/18 residents. A third empty zone
+  has zero inventory and an undefined rank. Manifest: `data/ticket13-demo/manifest.json`;
+  outputs: `results/ticket13-demo/{uniform,population}/`. Both choropleths were visually inspected.
+  Independent exported-layer reconciliation is recorded in `results/ticket13-demo/verification.json`;
+  zone expected population cut off sums exactly to the demo network value (0.01953125).
+- Actual CLI run completed using `data/ticket13-demo/uniform.yaml`, writing
+  `results/ticket13-cli/`. The population demo substitutes bbox acquisition only; its YAML alone
+  downloads actual roads, so reproduce its controlled grid via the demo script.
+- The first full regression run found an existing Windows travel-time cleanup issue:
+  **318 passed, 1 failed, 5 skipped**. A retained memory mapping masked a scenario-model validation
+  error with a file-lock error. The mapping now closes in a context manager on success/error,
+  without changing calculations. All **45 existing travel-time tests** and **2 new controlled
+  baseline/sample failure cleanup checks** passed. Final full offline regression rerun:
+  **323 passed, 5 skipped** in 607.89 seconds. Skips are the opt-in network/performance tests;
+  remaining warnings are dependency deprecations and the deliberately missing-CRS fixture.
+
+For manual review, use README's Ticket 13 instructions and inspect both demo GeoPackages,
+report tables and maps. These synthetic examples establish software behavior, not actual ward
+population accuracy or observed hazard vulnerability. Larger real-ward performance remains an
+optional follow-up; no claim of city-scale performance is made.

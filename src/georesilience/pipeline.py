@@ -19,7 +19,8 @@ from .classification import classify_network, classification_report, write_class
 from .connectivity import compute_connectivity, connectivity_report, load_od_pairs, write_od_reliability
 from .criticality import compute_criticality, criticality_report
 from .figures import (FIGURE_FILENAMES, POPULATION_FIGURES, write_connectivity_figure, write_figures,
-                      write_robustness_figures, write_accessibility_figures, write_population_figure)
+                      write_robustness_figures, write_accessibility_figures, write_population_figure,
+                      write_zones_figure)
 from .failure_probabilities import compute_failure_probabilities, failure_probabilities_report
 from .links import _link_rows
 from .network import cleaning_report, load_and_clean
@@ -29,6 +30,7 @@ from .time_models import prepare_time_model
 from .travel_time import compute_travel_time, travel_time_report
 from .accessibility import compute_accessibility, accessibility_report
 from .population import prepare_population, population_report
+from .zones import ZONE_FIGURES, aggregate_zones, load_zones, zones_report
 
 
 def _versions():
@@ -74,18 +76,19 @@ def run(config: RunConfig, out_override: Path | None = None, overwrite: bool = F
     out_dir = out_override or config.output.dir
     if out_dir.exists() and any(out_dir.iterdir()) and not overwrite:
         raise ValueError(f"output.dir exists and is not empty: {out_dir} (use --overwrite)")
+    graph, input_meta, cleaning = load_and_clean(config)
+    zones = load_zones(config.zones, graph.graph["crs"])
     out_dir.mkdir(parents=True, exist_ok=True)
     if overwrite:
         for name in ("network.gpkg", "summary.json", "report.txt", "run_config.yaml", "robustness_curves.csv",
-                     "od_reliability.csv"):
+                     "od_reliability.csv", "zones.gpkg"):
             (out_dir / name).unlink(missing_ok=True)
-        for name in (*FIGURE_FILENAMES, *POPULATION_FIGURES):
+        for name in (*FIGURE_FILENAMES, *POPULATION_FIGURES, *ZONE_FIGURES):
             (out_dir / "figures" / name).unlink(missing_ok=True)
         try:
             (out_dir / "figures").rmdir()
         except OSError:
             pass
-    graph, input_meta, cleaning = load_and_clean(config)
     boundary_wkt = input_meta.get("study_boundary_wkt")
     population = prepare_population(graph, wkt.loads(boundary_wkt) if boundary_wkt else None, config.population)
     population_weights = population.weights if population is not None else None
@@ -169,11 +172,16 @@ def run(config: RunConfig, out_override: Path | None = None, overwrite: bool = F
     crs = graph.graph.get("crs", "EPSG:4326")
     nodes_gdf = gpd.GeoDataFrame(nodes, geometry="geometry", crs=crs)
     nodes_gdf = _population_column_order(nodes_gdf)
-    nodes_gdf.to_file(
-        out_dir / "network.gpkg", layer="nodes", driver="GPKG", engine="pyogrio")
     gpkg_links = [{key: value for key, value in row.items() if not key.startswith("_")} for row in links]
     links_gdf = gpd.GeoDataFrame(gpkg_links, geometry="geometry", crs=crs)
     links_gdf = _population_column_order(links_gdf)
+    zone_result = aggregate_zones(zones, nodes_gdf, links_gdf) if zones is not None else None
+    if zone_result is not None:
+        nodes_gdf, links_gdf = zone_result.nodes, zone_result.links
+        zone_result.zones.to_file(
+            out_dir / "zones.gpkg", layer="zones", driver="GPKG", engine="pyogrio")
+    nodes_gdf.to_file(
+        out_dir / "network.gpkg", layer="nodes", driver="GPKG", engine="pyogrio")
     links_gdf.to_file(
         out_dir / "network.gpkg", layer="edges", driver="GPKG", engine="pyogrio", mode="a")
 
@@ -196,6 +204,8 @@ def run(config: RunConfig, out_override: Path | None = None, overwrite: bool = F
     }
     if population is not None:
         summary["population"] = population.summary
+    if zone_result is not None:
+        summary["zones"] = zone_result.summary
     (out_dir / "summary.json").write_text(json.dumps(summary, indent=2) + "\n")
     lines = [f"GeoResilience {__version__}", f"Input: {summary['meta']['input']}",
              f"UTC: {summary['meta']['timestamp_utc']}", "", "Network",
@@ -216,6 +226,8 @@ def run(config: RunConfig, out_override: Path | None = None, overwrite: bool = F
     lines.extend(["", *connectivity_report(connectivity.summary)])
     lines.extend(["", *travel_time_report(travel_time.summary)])
     lines.extend(["", *accessibility_report(accessibility.summary)])
+    if zone_result is not None:
+        lines.extend(["", *zones_report(zone_result.summary)])
     lines = [line.encode("ascii", "backslashreplace").decode() for line in lines]
     lines = [textwrap.fill(line, width=100) if len(line) > 100 else line for line in lines]
     (out_dir / "report.txt").write_text("\n".join(lines) + "\n")
@@ -231,4 +243,6 @@ def run(config: RunConfig, out_override: Path | None = None, overwrite: bool = F
         write_accessibility_figures(nodes_gdf, links_gdf, out_dir / "figures")
         if population is not None:
             write_population_figure(nodes_gdf, links_gdf, out_dir / "figures")
+        if zone_result is not None:
+            write_zones_figure(zone_result.zones, links_gdf, out_dir / "figures")
     return summary
