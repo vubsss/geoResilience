@@ -1,0 +1,98 @@
+[
+  {
+    "asset": "population_map.png",
+    "source": "results/ticket14-demo/population/figures/population_map.png",
+    "evidence_type": "local saved output",
+    "source_sha256": "5ec2717dd65450de98abe304a1c79fd01040a85d5bb8b5e48309bcd6aed0d905"
+  },
+  {
+    "asset": "vuln_map.png",
+    "source": "results/ticket14-demo/population/figures/vuln_map.png",
+    "evidence_type": "local saved output",
+    "source_sha256": "d492b265aebe78404adb5feb24b57f23bbdb7714960605de1b8441331890c7e0"
+  },
+  {
+    "asset": "zones_vulnerability_map.png",
+    "source": "results/ticket14-demo/population/figures/zones_vulnerability_map.png",
+    "evidence_type": "local saved output",
+    "source_sha256": "519bf0fbe72b25ef10f607de72c1d6a3eee78bb473cf98f7ec05f33c3dae8097"
+  },
+  {
+    "asset": "edge_betweenness_map.png",
+    "source": "results/ticket14-demo/population/figures/edge_betweenness_map.png",
+    "evidence_type": "local saved output",
+    "source_sha256": "8d61f99d2b301f87304028a6c7870d53a62f82f786a29b995d970473ffc0b4cd"
+  },
+  {
+    "asset": "critical_links_map.png",
+    "source": "results/ticket14-demo/population/figures/critical_links_map.png",
+    "evidence_type": "local saved output",
+    "source_sha256": "d2b9847211ecfdc162998036067c4f613ea1df6c72067a2320538193c71ffa64"
+  },
+  {
+    "asset": "scorecard.png",
+    "source": "results/ticket14-demo/population/figures/scorecard.png",
+    "evidence_type": "local saved output",
+    "source_sha256": "38e3a937672b7591ece05acfeeff5b6c10338917c323f3d96c2af729c6a1b6f5"
+  },
+  {
+    "asset": "missing_scorecard.png",
+    "source": "results/ticket14-demo/missing-metrics/figures/scorecard.png",
+    "evidence_type": "local saved output",
+    "source_sha256": "d826561a92bf59b0336c62b300e50964ceff5f9be93366ab3ad38158917f4ab5"
+  },
+  {
+    "asset": "problem_schematic.pdf",
+    "source": "GeoResilient_Project_Proposal.pdf",
+    "evidence_type": "illustrative topology; no empirical measurements",
+    "source_sha256": "92db69435eb07f6049b337f25f7f0cd317ec6b29f7eb76aca6f39444ffadd161"
+  },
+  {
+    "asset": "robustness_links.pdf",
+    "source": "results/ticket14-demo/population/robustness_curves.csv",
+    "evidence_type": "local saved output",
+    "source_sha256": "16123b7c8b0f5c76d9b855c92df34e18a24079c6a9a1db0d9570c1160391f506"
+  },
+  {
+    "asset": "accessibility_comparison.pdf",
+    "source": "results/ticket14-demo/population/summary.json",
+    "evidence_type": "local saved output",
+    "source_sha256": "bb01dda74404534927f1acef5d05fb2a0cb5873083e5186ef5d9969d6de0cd44"
+  },
+  {
+    "asset": "scorecard_comparison.pdf",
+    "source": "results/ticket14-demo/population/summary.json",
+    "evidence_type": "local saved output",
+    "source_sha256": "bb01dda74404534927f1acef5d05fb2a0cb5873083e5186ef5d9969d6de0cd44"
+  },
+  {
+    "asset": "male_allocation.pdf",
+    "source": "README.md",
+    "evidence_type": "recorded real-data validation, 12 October 2026; raw run outputs absent locally",
+    "source_sha256": "dfe43e952851cea9e3d0ce0057026cc2511e6f716868776e577d963591fb6d18"
+  },
+  {
+    "asset": "hansen_decay.pdf",
+    "source": "src/georesilience/accessibility.py",
+    "evidence_type": "plot of implemented exponential definition, h=100 m and R=500 m",
+    "source_sha256": "e102fd22abc257adabcf8569c723b466f6991fe0003cd012b16ac7da8a3f5409"
+  },
+  {
+    "asset": "presentation_population.pdf",
+    "source": "results/ticket14-demo/population/network.gpkg",
+    "evidence_type": "local saved output",
+    "source_sha256": "caf0f9ff93ded8b876f248038d297e151e744216ac3bf9e6d707f357cbd5bafc"
+  },
+  {
+    "asset": "presentation_vulnerability.pdf",
+    "source": "results/ticket14-demo/population/network.gpkg",
+    "evidence_type": "local saved output",
+    "source_sha256": "caf0f9ff93ded8b876f248038d297e151e744216ac3bf9e6d707f357cbd5bafc"
+  },
+  {
+    "asset": "presentation_criticality.pdf",
+    "source": "results/ticket14-demo/population/network.gpkg",
+    "evidence_type": "local saved output",
+    "source_sha256": "caf0f9ff93ded8b876f248038d297e151e744216ac3bf9e6d707f357cbd5bafc"
+  }
+]

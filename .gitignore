@@ -20,3 +20,47 @@ data/ticket11-demo/
 data/ticket12-demo/
 data/ticket13-demo/
 data/ticket14-demo/
+
+# Temporary files, local caches and test/coverage artifacts
+tmp/
+temp/
+.mypy_cache/
+.ruff_cache/
+.tox/
+.nox/
+.ipynb_checkpoints/
+.coverage
+.coverage.*
+coverage.xml
+htmlcov/
+*.log
+*.tmp
+*.temp
+*.bak
+*.swp
+*.swo
+*~
+
+# Operating-system clutter
+.DS_Store
+Thumbs.db
+Desktop.ini
+
+# LaTeX compilation intermediates
+*.aux
+*.fls
+*.fdb_latexmk
+*.nav
+*.snm
+*.vrb
+*.synctex.gz
+*.toc
+*.xdv
+output/latex/*.out
+
+# Generated presentation exports and duplicated evidence snapshots.
+# Keep the editable LaTeX, required figures and provenance trackable.
+/output/pdf/
+/output/*.zip
+/output/latex/evidence/
+/output/latex/layout_validation.json
