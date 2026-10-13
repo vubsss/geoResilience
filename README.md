@@ -9,6 +9,10 @@ qualitative comparison with AP2, including
 an explicit reference using the paper's spatial efficiency. Later analysis tickets are
 tracked in [TICKET_UPDATES.md](TICKET_UPDATES.md).
 
+Planned Tier 3 work adds official/OSM facility inventories and population-based 2SFCA
+accessibility with road-closure impacts. See the [Tier 3 plan](plan/TIER3.md) and
+[tickets 17-20](plan/tickets/README.md); these features are not implemented yet.
+
 Install with Python 3.10 or newer:
 
 ```sh

@@ -1,6 +1,10 @@
-# Tickets — GeoResilience Tiers 1–2
+# Tickets — GeoResilience Tiers 1–3
 
 Source of truth: `../DESIGN.md`. Each ticket is a vertical slice: when it is done, `georesilience run --config <yaml>` produces new, verifiable output (GeoPackage columns, `summary.json` keys, `report.txt` sections, figures) backed by tests.
+
+Tier 3 methodology and scope are defined in [TIER3.md](../TIER3.md). Its four broad
+tickets (17-20) start with official/OSM facility imports and finish with closure impacts.
+Ticket 17 also provides an acquisition/audit workflow before analysis is available.
 
 Work the **frontier**: pick any ticket whose blockers are all done.
 
@@ -18,6 +22,9 @@ from tests actually run are tracked in [TICKET_UPDATES.md](../../TICKET_UPDATES.
            └─ 06 ───────┴─ 07 ── 15
                                          14 ← 05, 06, 07, 09, 11
                                          16 ← 14
+
+Tier 3: 17 → 18 → 19 → 20
+        17 ← 02; 18 ← 02, 12; 19 ← 10; 20 ← 04, 05
 ```
 
 | #  | Ticket                                              | Blocked by         |
@@ -38,10 +45,19 @@ from tests actually run are tracked in [TICKET_UPDATES.md](../../TICKET_UPDATES.
 | 14 | Scorecard and final report                          | 05, 06, 07, 09, 11 |
 | 15 | Crucitti replication                                | 07                 |
 | 16 | Ada runbook                                         | 14                 |
+| 17 | Facility sources, registry and India data audit     | 02                 |
+| 18 | Consolidated-network attachment, demand and boundaries | 17, 02, 12       |
+| 19 | Baseline directed 2SFCA and service coverage         | 18, 10             |
+| 20 | Facility disruption, road rankings and Indian validation | 19, 04, 05     |
 
 ## Conventions (apply to every ticket)
 
 These are decided. Do not re-litigate them in individual tickets.
+
+Tier 3-specific extensions in [TIER3.md](../TIER3.md) qualify these conventions: routing
+uses travel-time costs, facilities remain separate from junctions, and an auxiliary routing
+view can retain components/attachments outside the structural graph. Existing Tier 1-2
+conventions and default behaviour remain unchanged.
 
 ### Stack
 

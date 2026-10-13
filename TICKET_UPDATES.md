@@ -16,6 +16,12 @@
 - [ ] **14 — Scorecard and final report** — not started.
 - [ ] **15 — Crucitti comparison** — implemented, tested and manually reviewed, including modern OSM sensitivity/inspection and the authors' published historical graphs. Historical data: 2/4 information and 3/4 betweenness matches under both conventions; MISMATCH. Planned-city classification discrepancy remains open.
 - [ ] **16 — Ada runbook** — not started.
+- [ ] **17 — Facility sources, registry and India data audit** — planned; not started. See [ticket](plan/tickets/17-facility-sources-and-registry.md).
+- [ ] **18 — Consolidated-network attachment, demand and boundaries** — planned; not started. See [ticket](plan/tickets/18-facility-network-and-demand.md).
+- [ ] **19 — Baseline directed 2SFCA and service coverage** — planned; not started. See [ticket](plan/tickets/19-facility-2sfca.md).
+- [ ] **20 — Facility disruption, road rankings and Indian validation** — planned; not started. See [ticket](plan/tickets/20-facility-disruption.md).
+
+Tier 3 scope, source-access assumptions and methodology are in [plan/TIER3.md](plan/TIER3.md).
 
 Additional validation ideas for every ticket are tracked separately in
 [plan/TEST_RECOMMENDATIONS.md](plan/TEST_RECOMMENDATIONS.md). They are follow-up recommendations,

@@ -262,12 +262,18 @@ Layers 1–2 run in CI. Layer 3 is a scripted validation run.
 
 **Deferred (Tiers 1–2 extensions):**
 - `.osm.pbf` input
-- Buffered boundary download
+- Buffered boundary download (required for facility analysis in the Tier 3 plan below)
 - HMV vs LMV subgraphs (filtered by road class and access tags)
 - Added links ("what if we build this road")
 - A run-vs-run comparison layer
 - Hazard presets for p_fail: earthquake (El-Maissi et al. 2022 SVI; mostly not derivable from OSM) and flood (DEM / underpasses / ward flood risk)
 
 **Tier 3, critical facilities:** hospital, school and fire-station layers with capacity. 2SFCA accessibility. Links weighted by their role in reaching facilities, plus facility-specific critical links.
+
+The detailed [Tier 3 plan](TIER3.md) and tickets 17-20 cover official Indian facility
+inventories (UDISE+ for schools, candidate hospital registries), OSM reconciliation,
+consolidation-aware attachment, directed 2SFCA and road-closure impacts. Capacity and
+explicit equal-supply modes remain separate. Positive accessibility losses and gains are
+reported separately because recomputed supply-sharing ratios can mask harm in the mean.
 
 **Tier 4, traffic:** gravity-model demand from WorldPop, static equilibrium assignment (AequilibraE, BPR), calibrated against Uber Movement where usable. Criticality measured as delay under load instead of distance alone.
