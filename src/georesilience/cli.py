@@ -19,6 +19,10 @@ def main(argv=None):
     run_parser.add_argument("--config", required=True, type=Path)
     run_parser.add_argument("--out", type=Path)
     run_parser.add_argument("--overwrite", action="store_true")
+    facilities_parser = commands.add_parser("facilities", help="Import and audit facility inventories without road analysis")
+    facilities_parser.add_argument("--config", required=True, type=Path)
+    facilities_parser.add_argument("--out", type=Path)
+    facilities_parser.add_argument("--overwrite", action="store_true")
     template_parser = commands.add_parser("template", help="Export per-event OSM-way probability CSV")
     template_parser.add_argument("--config", required=True, type=Path)
     template_parser.add_argument("--out", required=True, type=Path)
@@ -38,6 +42,11 @@ def main(argv=None):
     crucitti_parser.add_argument("--no-figures", action="store_true")
     args = parser.parse_args(argv)
     try:
+        if args.command == "facilities":
+            from .facility_config import load_facility_config
+            from .facilities import run_facilities
+            run_facilities(load_facility_config(args.config), args.out, args.overwrite)
+            return 0
         if args.command == "validate":
             from .crucitti import validate_crucitti
             validate_crucitti(args.out, inputs_dir=args.inputs, offline=args.offline,

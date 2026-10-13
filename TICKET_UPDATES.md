@@ -2174,3 +2174,99 @@ Additional geographic, parameter-sensitivity, detailed QGIS and performance chec
 optional follow-up recommendations. Completion does not claim that every recommended
 experiment has been performed. No analysis code, results or test outcomes changed in this
 documentation update.
+
+## Ticket 17 — facility sources, reconciliation and India audit (13 October 2026)
+
+**In progress.** Offline registry implementation and initial source-access audit are available.
+The first five acceptance items are checked; the real independently geocoded official-reference
+comparison remains open. Neither the synthetic fixtures nor the public directory access sample
+is presented as a completed official inventory audit.
+
+Implemented `georesilience facilities --config <yaml>` without road acquisition/analysis,
+plus optional `facilities:` integration in ordinary `georesilience run`. CSV/GeoPackage
+adapters require explicit field/CRS mappings and retain text identifiers. OSM XML works offline;
+explicit online Overpass extraction caches XML/query metadata and verifies checksums. Raw files,
+source metadata, original geometry/CRS, status, level, management, reference year, resources and
+attribute-level provenance are retained. Node/way/relation extraction uses service tags;
+building-only features do not establish an operating facility.
+
+Reconciliation uses namespaced IDs, then named site/location/address context. Candidate
+components are evaluated together, with conflicting identifiers/levels, implausibly distant
+ID locations and ambiguous alternatives exported for review. Same-campus institutions remain
+separate; a named OSM point/site duplicate can merge. Explicit CSV merge/separate overrides
+are validated, including transitive contradictions. Ambiguous records remain in the registry
+and are ineligible for supply until reviewed. Registry attributes use deterministic official-first
+precedence; all conflicting attribute values remain visible for review.
+
+Equal supply and single-unit capacity modes are separate. Missing capacity errors, excludes or
+stays missing according to policy, never becoming one or zero. Beds cannot silently mix with
+physicians or equal facilities. Enrolment, teachers and classrooms remain labelled resources.
+Outputs include projected registry/source-record layers, match/reject tables, audit JSON,
+provenance manifest, frozen inputs, resolved offline configs and a comparison map. Ordinary road
+runs also receive summary/report sections and facility layers in `network.gpkg`; road attachment,
+demand and 2SFCA remain Tickets 18-20.
+
+### Real source-access findings
+
+See [source-access notes](docs/ticket17-source-access.md) for the checked URLs, access limits,
+reproduction and outstanding prerequisites. `examples/audit_ticket17_india.py` acquired three
+public government webpages and a small real OSM XML extract, then reran entirely offline with
+checksum verification and HTTP prohibited. Downloaded inputs/results remain ignored.
+
+- UDISE+ requires the user's/institution's registration and research-data request. No export,
+  approved reuse conditions, actual school-level coordinate schema or academic year was obtained.
+- The National Hospital Directory's indexed CSV metadata could not be turned into an actual
+  download through the retrieved page; HFR redirected to the web app and no bulk export was
+  established. State/district pages provide a limited alternative, not a complete inventory.
+- The Hyderabad sample contains **3 official school rows**, **9 official DH/AH/MCH hospital
+  rows**, and **15 other health-directory rows excluded by the explicit service definition**.
+  No independent numeric coordinates exist in these extracted official rows. All 9 hospital
+  rows have bed values, but reference dates and possibly overlapping King Koti identities need
+  review. No capacity model or summed official bed inventory is claimed.
+- WGS84 OSM bbox `[78.465, 17.385, 78.480, 17.400]`: **13 hospital and 6 school candidates**,
+  no fire-station candidates in this window. The registry has **31 records/facilities** and
+  **12 missing-location rejects**. Official rows have district scope and cannot be restricted
+  to the OSM window without independent coordinates. There are zero located official reference
+  records, so OSM coverage fractions are **undefined**, not 0%.
+- A larger bbox returned HTTP 400 from the main map API; the smaller extract succeeded.
+  Production Overpass caching is fixture-tested; the live real sample uses the main map API.
+- Provisional first worked service: **hospitals, equal supply**, with explicit inclusion of
+  OSM candidates and unknown operational status. Official school export/access and validated
+  bed-capacity semantics remain prerequisites. The state fire list was frozen, but its numeric
+  locations and appliance/crew capacity were not established.
+
+### Verification actually run
+
+The previous temporary environment no longer existed. Created
+`/tmp/georesilience-ticket17-venv` with Python 3.13, OSMnx 2.1.1, GeoPandas 1.2.0, Shapely
+2.2.0, Pydantic 2.14.1 and the declared dependencies. Installation initially failed under
+restricted-network DNS; the authorized download succeeded in the isolated environment.
+
+- Full ordinary offline regression run: **312 passed, 5 skipped, 33 warnings in 576.13 s**.
+  This run collected the initial 12 facility tests plus the existing 300 tests. The skips are
+  opt-in network/slow cases; warnings come from existing population code/tests.
+- Subsequent facility checks cover frozen-file tampering, mocked cached acquisition, ambiguous
+  supply exclusion, same-source institution separation, road-pipeline integration and overwrite,
+  distant-ID review, empty XML and transitive review protection. Final targeted run:
+  **39 passed, 3 skipped in 28.39 s** across facilities (20 tests), inputs/cleaning and CLI
+  tracer-bullet tests. The full regression count does not include tests added after its collection.
+- Synthetic fixture command completed: **11 source records → 9 facilities**, including a
+  three-record official/node/site match; invalid coordinates and inactive records retained with
+  flags. School enrolment/resources stay separate from equal supply; hospital supply is 20 beds.
+- Both synthetic and real registries reran from resolved frozen configs with all HTTP prohibited
+  and **identical audit JSON**. The real source-audit runner also reran offline. Inspected the
+  comparison map with common metric extents, readable labels and explicit missing-location note.
+- `git diff --check` passed. No network tests, cluster performance run, manual match review or
+  independently geocoded official completeness comparison was claimed.
+
+Reproduce from the repository root:
+
+```sh
+source /tmp/georesilience-ticket17-venv/bin/activate
+PYTHONPATH= PYTEST_DISABLE_PLUGIN_AUTOLOAD=1 MPLCONFIGDIR=/tmp/georesilience-mpl python -m pytest -q
+georesilience facilities --config examples/ticket17-facilities.yaml --overwrite
+python examples/audit_ticket17_india.py --overwrite
+```
+
+The real-data acceptance item can close only after obtaining a usable independent official
+school/hospital sample, verifying dates/status/supply semantics and reviewing OSM matches.

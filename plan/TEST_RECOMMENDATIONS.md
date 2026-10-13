@@ -349,3 +349,25 @@ CRS alignment and allocation on actual roads; neither establishes census accurac
 - [ ] Before a large run, exercise environment setup and a small scheduled job on the actual
   cluster. Measure memory/runtime, verify resource settings against the applicable policies and
   record results before publishing full-city estimates.
+
+## 17 — Facility sources and registry
+
+- [x] Offline CSV/GeoPackage/XML fixtures: leading-zero IDs, point/site duplicates, separate
+  institutions sharing a campus, ambiguous candidates, overrides, invalid locations, inactive
+  status, explicit supply units and missing-capacity policies. Verify frozen checksums and
+  unchanged audit counts on offline reruns. Exercise optional road-pipeline exports.
+- [x] Freeze a small real Hyderabad OSM window and public official directory samples; record
+  dates, hashes, supply fields and lack of independent official coordinates. This is an access
+  audit, not successful acquisition of an official geocoded reference inventory.
+- [ ] Obtain approved UDISE+ school-level export and permitted reuse conditions. Verify IDs,
+  academic year, coordinates, levels, management and the meanings of capacity/resources.
+- [ ] Obtain an independently geocoded hospital reference sample; review OSM candidates,
+  public/private scope, facility types, bed dates and overlapping King Koti directory records.
+  Keep undefined match denominators separate from measured zero coverage.
+- [ ] Verify a local fire-station inventory and appliance/crew fields. Review station/outpost
+  and equipment-only records. Do not treat the absence of OSM features in one tiny window as
+  absence of fire services in the city.
+- [ ] Review positional accuracy and point/site/entrance representation on a map, exercise
+  bilingual/abbreviated names and source disagreements, and measure matching sensitivity
+  before scaling beyond the small-area audit. Live Overpass reliability is not established by
+  the mocked acquisition test or the separate main-API sample download.

@@ -1,0 +1,45 @@
+# Entirely synthetic fixtures near Hyderabad; not a real Indian coverage audit.
+sources:
+  - name: official_demo
+    kind: official
+    format: csv
+    path: tests/fixtures/facilities/official.csv
+    service: school
+    x: longitude
+    y: latitude
+    crs: EPSG:4326
+    columns:
+      source_id: code
+      official_id: code
+      name: name
+      status: status
+      service_level: level
+      enrolment: enrolment
+      teachers: teachers
+      classrooms: classrooms
+    id_namespace: udise
+    status_map: {open: active, closed: inactive}
+    reference_year: synthetic
+    retrieved_at: '2026-10-13'
+    url: synthetic-fixture
+    licence: synthetic-test-data
+  - name: osm_demo
+    kind: osm
+    format: osm_xml
+    path: tests/fixtures/facilities/facilities.osm
+    id_namespace: udise
+    reference_year: synthetic
+    retrieved_at: '2026-10-13'
+    url: synthetic-fixture
+    licence: synthetic-test-data
+supply:
+  school: {mode: equal, unit: facilities, missing: error}
+  hospital: {mode: capacity, unit: beds, missing: error}
+  fire_station: {mode: equal, unit: facilities, missing: error}
+include_osm_candidates: true
+include_unknown_status: true
+offline: true
+metric_crs: EPSG:32644
+match_max_m: 100
+output_dir: results/ticket17-demo
+figures: true

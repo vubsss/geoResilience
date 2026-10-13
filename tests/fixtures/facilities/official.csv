@@ -1,0 +1,6 @@
+code,name,longitude,latitude,status,level,beds,enrolment,teachers,classrooms
+001,Lotus School,78.47000,17.40000,open,primary,,120,8,6
+002,Lotus Secondary School,78.47000,17.40000,open,secondary,,200,12,10
+003,Official Only School,78.47300,17.40100,open,primary,,90,6,4
+004,Invalid Coordinates,999,17.40,open,primary,,30,3,2
+005,Closed School,78.47400,17.40200,closed,primary,,0,0,0

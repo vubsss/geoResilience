@@ -77,7 +77,9 @@ def run(config: RunConfig, out_override: Path | None = None, overwrite: bool = F
     out_dir.mkdir(parents=True, exist_ok=True)
     if overwrite:
         for name in ("network.gpkg", "summary.json", "report.txt", "run_config.yaml", "robustness_curves.csv",
-                     "od_reliability.csv"):
+                     "od_reliability.csv", "facility_matches.csv", "facility_rejects.csv",
+                     "facility_audit.json", "facility_provenance.json", "facility_config.yaml",
+                     "facility_comparison.png"):
             (out_dir / name).unlink(missing_ok=True)
         for name in (*FIGURE_FILENAMES, *POPULATION_FIGURES):
             (out_dir / "figures" / name).unlink(missing_ok=True)
@@ -177,6 +179,13 @@ def run(config: RunConfig, out_override: Path | None = None, overwrite: bool = F
     links_gdf.to_file(
         out_dir / "network.gpkg", layer="edges", driver="GPKG", engine="pyogrio", mode="a")
 
+    facility_result = None
+    if config.facilities is not None:
+        from .facilities import build_registry, export_registry
+        facility_config = config.facilities.model_copy(update={"metric_crs": str(crs)})
+        facility_result = build_registry(facility_config, out_dir)
+        export_registry(facility_result, facility_config, out_dir, gpkg=out_dir / "network.gpkg")
+
     histogram = dict(sorted(Counter(degree.values()).items()))
     summary = {
         "meta": {"package_version": __version__,
@@ -194,6 +203,8 @@ def run(config: RunConfig, out_override: Path | None = None, overwrite: bool = F
                                  "max": max(degree.values(), default=0),
                                  "histogram": histogram}, **statistics},
     }
+    if facility_result is not None:
+        summary["facilities"] = facility_result.summary
     if population is not None:
         summary["population"] = population.summary
     (out_dir / "summary.json").write_text(json.dumps(summary, indent=2) + "\n")
@@ -216,10 +227,15 @@ def run(config: RunConfig, out_override: Path | None = None, overwrite: bool = F
     lines.extend(["", *connectivity_report(connectivity.summary)])
     lines.extend(["", *travel_time_report(travel_time.summary)])
     lines.extend(["", *accessibility_report(accessibility.summary)])
+    if facility_result is not None:
+        from .facilities import facility_report
+        lines.extend(["", *facility_report(facility_result.summary)])
     lines = [line.encode("ascii", "backslashreplace").decode() for line in lines]
     lines = [textwrap.fill(line, width=100) if len(line) > 100 else line for line in lines]
     (out_dir / "report.txt").write_text("\n".join(lines) + "\n")
     resolved = _resolved_config(config, out_dir, computation, time_model is not None)
+    if facility_result is not None:
+        resolved["facilities"] = yaml.safe_load((out_dir / "facility_config.yaml").read_text())
     if population is not None:
         resolved["population_provenance"] = population.provenance
     (out_dir / "run_config.yaml").write_text(yaml.safe_dump(resolved, sort_keys=False))

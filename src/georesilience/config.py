@@ -5,6 +5,8 @@ from typing import Annotated, Literal
 import yaml
 from pydantic import BaseModel, ConfigDict, Field, ValidationError, model_validator
 
+from .facility_config import FacilityConfig
+
 
 class StrictModel(BaseModel):
     model_config = ConfigDict(extra="forbid")
@@ -147,6 +149,7 @@ class PopulationConfig(StrictModel):
 
 class RunConfig(StrictModel):
     input: InputConfig
+    facilities: FacilityConfig | None = None
     network: NetworkConfig = Field(default_factory=NetworkConfig)
     cleaning: CleaningConfig = Field(default_factory=CleaningConfig)
     analysis: AnalysisConfig = Field(default_factory=AnalysisConfig)

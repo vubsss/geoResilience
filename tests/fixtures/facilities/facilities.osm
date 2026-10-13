@@ -1,0 +1,13 @@
+<?xml version='1.0' encoding='UTF-8'?>
+<osm version="0.6" generator="synthetic-ticket17-fixture">
+<node id="1" lat="17.4" lon="78.47"><tag k="amenity" v="school"/><tag k="name" v="Lotus School"/><tag k="ref:udise" v="001"/><tag k="isced:level" v="primary"/></node>
+<node id="2" lat="17.402" lon="78.472"><tag k="amenity" v="school"/><tag k="name" v="OSM Only School"/></node>
+<node id="3" lat="17.403" lon="78.473"><tag k="amenity" v="hospital"/><tag k="name" v="Sample Hospital"/><tag k="capacity:beds" v="20"/></node>
+<node id="4" lat="17.404" lon="78.474"><tag k="amenity" v="fire_station"/><tag k="name" v="Sample Fire Station"/></node>
+<node id="5" lat="17.405" lon="78.475"><tag k="building" v="school"/></node>
+<node id="6" lat="17.406" lon="78.476"><tag k="amenity" v="school"/><tag k="name" v="Disused School"/><tag k="disused" v="yes"/></node>
+<node id="11" lat="17.3998" lon="78.4698"/><node id="12" lat="17.3998" lon="78.4702"/>
+<node id="13" lat="17.4002" lon="78.4702"/><node id="14" lat="17.4002" lon="78.4698"/>
+<way id="100"><nd ref="11"/><nd ref="12"/><nd ref="13"/><nd ref="14"/><nd ref="11"/>
+<tag k="amenity" v="school"/><tag k="name" v="Lotus School"/><tag k="ref:udise" v="001"/><tag k="isced:level" v="primary"/></way>
+</osm>

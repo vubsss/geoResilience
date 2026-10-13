@@ -9,9 +9,10 @@ qualitative comparison with AP2, including
 an explicit reference using the paper's spatial efficiency. Later analysis tickets are
 tracked in [TICKET_UPDATES.md](TICKET_UPDATES.md).
 
-Planned Tier 3 work adds official/OSM facility inventories and population-based 2SFCA
-accessibility with road-closure impacts. See the [Tier 3 plan](plan/TIER3.md) and
-[tickets 17-20](plan/tickets/README.md); these features are not implemented yet.
+Tier 3 now supports official/OSM facility imports, reconciliation and source/supply audits
+(Ticket 17; the real official-reference audit remains open). Population-based 2SFCA and
+facility road-closure impacts are planned in [tickets 18-20](plan/tickets/README.md).
+See the [Tier 3 plan](plan/TIER3.md) and [facility workflow](#facility-acquisition-and-registry-ticket-17).
 
 Install with Python 3.10 or newer:
 
@@ -2111,3 +2112,111 @@ The runner's generated YAMLs describe normal bbox acquisition. Running them dire
 `georesilience run` downloads current OSM roads and may change the graph. Use the `--offline`
 runner above for an exact repeat of the frozen experiment. Further validation recommendations
 remain in [plan/TEST_RECOMMENDATIONS.md](plan/TEST_RECOMMENDATIONS.md#12--population-weighting).
+
+## Facility acquisition and registry (Ticket 17)
+
+A road-independent command imports local inventories, reconciles identity, audits supply and
+exports a registry. The first five offline acceptance items are implemented; the Indian
+reference-data audit remains open. See [source access findings](docs/ticket17-source-access.md)
+for portal checks, the frozen Hyderabad sample and the external prerequisites.
+
+```sh
+georesilience facilities --config examples/ticket17-facilities.yaml
+# Rerun exclusively from frozen copies with verified hashes:
+georesilience facilities --config results/ticket17-demo/facility_config.yaml \
+  --out results/ticket17-demo-rerun
+```
+
+The example contains synthetic official/OSM fixtures, including a leading-zero school ID,
+a point/polygon duplicate, two institutions sharing a campus, missing coordinates, inactive
+facilities, resources and a hospital bed count. It does not satisfy the real Indian audit.
+Use `--overwrite` to replace existing outputs; retained raw files are preserved for reruns.
+Relative input paths follow the project's current-working-directory convention.
+
+A standalone facility YAML has `sources`, `supply`, `metric_crs`, `match_max_m`,
+`include_osm_candidates`, `include_unknown_status`, `offline`, `figures`, `output_dir`,
+and optionally `overrides`. Source names must be unique. Every service present in the input
+needs an explicit supply convention. Output and matching CRS must be projected in metres.
+The demo uses Hyderabad's UTM CRS, EPSG:32644; choose the appropriate local CRS elsewhere.
+
+Each CSV source declares `name`, `kind: official`, `format: csv`, `path`, `service`, `x`, `y`,
+`crs`, `columns`, `retrieved_at`, `url` and `licence`. `columns.source_id` is required and is
+read as text, preserving leading zeros. Optional canonical mappings are `official_id`,
+`name`, `address`, `status`, `service_level`, `management`, `subtype`, `reference_year`,
+`supply_value`, `supply_unit`, `enrolment`, `teachers` and `classrooms`. Explicitly prefilter
+mixed official directories to the chosen service definition. Missing or duplicate row IDs
+are rejected; repeated institution representations need distinct row IDs and a shared
+`official_id` for ID matching. Use `id_namespace: udise` or `hfr` for corresponding IDs.
+Without a declared shared namespace, identifiers are not compared across sources.
+
+Use `format: gpkg` with an explicit `layer` for geographic inventories (including offline
+OSM feature inventories with `kind: osm`). The file must declare a CRS or supply an explicit
+`crs`; conflicting declarations fail. Source/official identifiers must be stored as text
+because leading zeros cannot be recovered from numeric storage. Point/Polygon/MultiPolygon
+geometries are accepted. Raw files, original WKT and source CRS are retained; polygons use
+a labelled representative point for the registry location. Entrances and road attachment
+are Ticket 18 work. Invalid geometry/coordinates are reported and left without a location.
+
+For status use `status_map: {open: active, closed: inactive}` or canonical
+`active/inactive/unknown` values. The default is `unknown`; unmapped statuses are reported
+and treated as unknown. Unknown status is included by default and flagged, while explicitly
+inactive facilities are ineligible. OSM amenity tags imply a candidate service, not verified
+operation. OSM-only facilities remain supplementary candidates and are ineligible by default;
+`include_osm_candidates: true` explicitly includes them. Ambiguous match participants remain
+separate and ineligible until review, preventing duplicate supply during later analysis.
+
+Offline OSM input uses `kind: osm`, `format: osm_xml`, `path` and the same source metadata.
+An optional `bbox: [west, south, east, north]` clips extracted OSM features. Online extraction
+uses `format: osm_bbox`, `bbox`, `cache_dir` and optionally an Overpass `endpoint`. Set
+`offline: false` explicitly to download; the default is strictly offline. XML responses and
+query/download metadata are cached and checksum-verified. Nodes, ways and relations are
+supported for `amenity=school|hospital|fire_station` and `healthcare=hospital`. A school
+building tag alone is excluded. Lifecycle/inactive tags in the XML are preserved as inactive.
+School `ref:udise` and hospital `ref:hfr` populate their separate ID namespaces when present;
+other ID conventions can be mapped through the GeoPackage adapter.
+
+Reconciliation uses shared IDs, then exact normalized names with distance/site/address
+context. It evaluates candidate components as a whole rather than choosing the first nearby
+record. Same-source official rows with distinct IDs remain separate; named OSM point/site
+representations can resolve together. Conflicting IDs/levels and multiple plausible matches
+are exported for review. Nearby different institutions are not merged by distance alone.
+A CSV `overrides` file with `left,right,action` (action `merge` or `separate`) uses exported
+source `record_key` values, for example `official_demo:001,osm_demo:node/1,merge`.
+Contradictory/transitive overrides and cross-service merges fail. Reimport after review.
+
+Canonical attributes prefer official records, then source name and row ID in sorted order;
+the first nonempty value wins and all values/conflicts retain attribute-level provenance.
+Missing official geometry/supply can use a matched OSM source with that provenance retained.
+Review conflicting values before interpreting results. Source ordering and IDs determine
+stable registry IDs; changes in membership remain traceable through source-record lineage.
+
+Supply is declared separately per service:
+
+```yaml
+supply:
+  school: {mode: equal, unit: facilities, missing: error}
+  hospital: {mode: capacity, unit: beds, missing: exclude}
+```
+
+Equal mode assigns one unit to each eligible facility and keeps raw capacity/resources
+separate. Capacity mode requires one documented unit across contributing records, including
+OSM `capacity:beds`; mixed beds/physicians/other units fail. CSV/GPKG sources can declare
+`capacity_unit` or map a per-row `supply_unit`. `missing: error` stops, `exclude` keeps the
+record but makes it ineligible, and `keep_missing` leaves supply missing and `supply_ready`
+false. Missing supply never becomes one or zero. Enrolment, teachers and classrooms remain
+labelled resource fields and cannot be mapped simultaneously as capacity. Selecting the
+correct semantic input field remains the source owner's responsibility.
+
+Outputs include `registry.gpkg`, `facility_matches.csv`, `facility_rejects.csv`,
+`facility_audit.json`, `facility_provenance.json`, `facility_comparison.png`, resolved
+`facility_config.yaml`, `summary.json`, `report.txt`, `run_config.yaml`, and hash-named raw
+copies. Resolved configs point to those copies, include expected checksums, and enforce
+offline operation. Empty match/coordinate denominators remain undefined. Audit counts are
+relative to the chosen sample, not estimates of all facilities in existence. Source-record
+counts are distinguished from deduplicated registry counts.
+
+The same configuration may be nested under optional `facilities:` in a normal road-run YAML.
+`georesilience run` then adds `facilities` and `facility_source_records` layers to
+`network.gpkg`, uses the road CRS, and adds audit/report/provenance outputs. Facility sources,
+supply and resolved paths appear in `run_config.yaml`. Omitting `facilities` retains existing
+road analysis. Attachment, demand allocation and 2SFCA are not computed by Ticket 17.

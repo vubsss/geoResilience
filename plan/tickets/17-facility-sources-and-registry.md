@@ -5,7 +5,10 @@ OSM, with a small Indian study-area audit that establishes usable sources and su
 
 **Blocked by:** 02 (existing input infrastructure).
 
-**Status:** planned; not started.
+**Status:** in progress; offline implementation and source-access audit available (13 October 2026).
+Real independently geocoded official-reference audit remains open. See
+[source-access findings](../../docs/ticket17-source-access.md) and
+[TICKET_UPDATES](../../TICKET_UPDATES.md).
 
 **Methodology:** [Tier 3 plan](../TIER3.md). This ticket owns acquisition and facility
 identity; road attachment belongs to 18.
@@ -39,12 +42,12 @@ identity; road attachment belongs to 18.
 
 ## Acceptance criteria
 
-- [ ] Official-only and OSM-only facilities survive with source/status flags.
-- [ ] Duplicate point/site representations resolve reproducibly; separate institutions sharing
+- [x] Official-only and OSM-only facilities survive with source/status flags.
+- [x] Duplicate point/site representations resolve reproducibly; separate institutions sharing
   a site remain separate. Ambiguous matches are exported for review.
-- [ ] Leading-zero IDs survive; invalid coordinates and missing supply are reported.
-- [ ] Equal supply and capacity units cannot be silently mixed; enrolment is not called capacity.
-- [ ] Cached/offline reruns reproduce the registry and audit; ordinary tests make no HTTP calls.
+- [x] Leading-zero IDs survive; invalid coordinates and missing supply are reported.
+- [x] Equal supply and capacity units cannot be silently mixed; enrolment is not called capacity.
+- [x] Cached/offline reruns reproduce the registry and audit; ordinary tests make no HTTP calls.
 - [ ] Real-data audit records eligible counts, valid-coordinate counts, OSM matches, supply
   completeness, dates and selection decisions. If access is unavailable, clearly record the
   external blocker and keep this criterion open; synthetic data does not satisfy it.

@@ -1,7 +1,9 @@
 # Tier 3: facility accessibility and road criticality
 
 Planning baseline: 13 October 2026. Branch: `tier-3`.
-Status: planned; no Tier 3 implementation or data acquisition is claimed here.
+Status: Ticket 17 offline registry and initial public-source/OSM acquisition audit implemented.
+Its independently geocoded official-reference audit remains open; Tickets 18-20 remain planned.
+See [source-access findings](../docs/ticket17-source-access.md).
 
 ## Objective
 
