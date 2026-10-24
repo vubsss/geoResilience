@@ -1,0 +1,147 @@
+<?xml version='1.0' encoding='utf-8'?>
+<graphml xmlns="http://graphml.graphdrawing.org/xmlns" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:schemaLocation="http://graphml.graphdrawing.org/xmlns http://graphml.graphdrawing.org/xmlns/1.0/graphml.xsd">
+  <key id="d7" for="edge" attr.name="maxspeed" attr.type="string" />
+  <key id="d6" for="edge" attr.name="highway" attr.type="string" />
+  <key id="d5" for="edge" attr.name="osmid" attr.type="string" />
+  <key id="d4" for="edge" attr.name="length" attr.type="string" />
+  <key id="d3" for="node" attr.name="y" attr.type="string" />
+  <key id="d2" for="node" attr.name="x" attr.type="string" />
+  <key id="d1" for="graph" attr.name="simplified" attr.type="string" />
+  <key id="d0" for="graph" attr.name="crs" attr.type="string" />
+  <graph edgedefault="directed">
+    <node id="0">
+      <data key="d2">500050.0</data>
+      <data key="d3">1900250.0</data>
+    </node>
+    <node id="1">
+      <data key="d2">500150.0</data>
+      <data key="d3">1900250.0</data>
+    </node>
+    <node id="2">
+      <data key="d2">500250.0</data>
+      <data key="d3">1900250.0</data>
+    </node>
+    <node id="3">
+      <data key="d2">500050.0</data>
+      <data key="d3">1900150.0</data>
+    </node>
+    <node id="4">
+      <data key="d2">500150.0</data>
+      <data key="d3">1900150.0</data>
+    </node>
+    <node id="5">
+      <data key="d2">500250.0</data>
+      <data key="d3">1900150.0</data>
+    </node>
+    <node id="6">
+      <data key="d2">500050.0</data>
+      <data key="d3">1900050.0</data>
+    </node>
+    <node id="7">
+      <data key="d2">500150.0</data>
+      <data key="d3">1900050.0</data>
+    </node>
+    <node id="8">
+      <data key="d2">500250.0</data>
+      <data key="d3">1900050.0</data>
+    </node>
+    <edge source="0" target="1" id="0">
+      <data key="d4">100.0</data>
+      <data key="d5">1</data>
+      <data key="d6">residential</data>
+      <data key="d7">40</data>
+    </edge>
+    <edge source="1" target="0" id="0">
+      <data key="d4">100.0</data>
+      <data key="d5">1</data>
+      <data key="d6">residential</data>
+      <data key="d7">40</data>
+    </edge>
+    <edge source="1" target="2" id="0">
+      <data key="d4">100.0</data>
+      <data key="d5">2</data>
+      <data key="d6">residential</data>
+      <data key="d7">40</data>
+    </edge>
+    <edge source="2" target="1" id="0">
+      <data key="d4">100.0</data>
+      <data key="d5">2</data>
+      <data key="d6">residential</data>
+      <data key="d7">40</data>
+    </edge>
+    <edge source="2" target="3" id="0">
+      <data key="d4">223.60679774997897</data>
+      <data key="d5">3</data>
+      <data key="d6">residential</data>
+      <data key="d7">40</data>
+    </edge>
+    <edge source="3" target="2" id="0">
+      <data key="d4">223.60679774997897</data>
+      <data key="d5">3</data>
+      <data key="d6">residential</data>
+      <data key="d7">40</data>
+    </edge>
+    <edge source="3" target="4" id="0">
+      <data key="d4">100.0</data>
+      <data key="d5">4</data>
+      <data key="d6">residential</data>
+      <data key="d7">40</data>
+    </edge>
+    <edge source="4" target="3" id="0">
+      <data key="d4">100.0</data>
+      <data key="d5">4</data>
+      <data key="d6">residential</data>
+      <data key="d7">40</data>
+    </edge>
+    <edge source="4" target="5" id="0">
+      <data key="d4">100.0</data>
+      <data key="d5">5</data>
+      <data key="d6">residential</data>
+      <data key="d7">40</data>
+    </edge>
+    <edge source="5" target="4" id="0">
+      <data key="d4">100.0</data>
+      <data key="d5">5</data>
+      <data key="d6">residential</data>
+      <data key="d7">40</data>
+    </edge>
+    <edge source="5" target="6" id="0">
+      <data key="d4">223.60679774997897</data>
+      <data key="d5">6</data>
+      <data key="d6">residential</data>
+      <data key="d7">40</data>
+    </edge>
+    <edge source="6" target="5" id="0">
+      <data key="d4">223.60679774997897</data>
+      <data key="d5">6</data>
+      <data key="d6">residential</data>
+      <data key="d7">40</data>
+    </edge>
+    <edge source="6" target="7" id="0">
+      <data key="d4">100.0</data>
+      <data key="d5">7</data>
+      <data key="d6">residential</data>
+      <data key="d7">40</data>
+    </edge>
+    <edge source="7" target="6" id="0">
+      <data key="d4">100.0</data>
+      <data key="d5">7</data>
+      <data key="d6">residential</data>
+      <data key="d7">40</data>
+    </edge>
+    <edge source="7" target="8" id="0">
+      <data key="d4">100.0</data>
+      <data key="d5">8</data>
+      <data key="d6">residential</data>
+      <data key="d7">40</data>
+    </edge>
+    <edge source="8" target="7" id="0">
+      <data key="d4">100.0</data>
+      <data key="d5">8</data>
+      <data key="d6">residential</data>
+      <data key="d7">40</data>
+    </edge>
+    <data key="d0">EPSG:32644</data>
+    <data key="d1">True</data>
+  </graph>
+</graphml>

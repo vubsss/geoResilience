@@ -4,12 +4,11 @@ import sys
 import math
 from datetime import datetime, timezone
 
-import geopandas as gpd
 import networkx as nx
 import osmnx as ox
-from shapely.geometry import LineString, box
+from shapely.geometry import LineString
 
-from .links import _link_rows
+from .links import _link_rows, cleaning_fingerprint, identify_links
 
 EXTRA_WAY_TAGS = (
     "motor_vehicle", "motorcar", "hgv", "access", "service", "area",
@@ -20,7 +19,6 @@ DRIVE_EXCLUDED_HIGHWAYS = {
     "elevator", "escalator", "footway", "no", "path", "pedestrian", "planned",
     "platform", "proposed", "raceway", "razed", "service", "steps", "track",
 }
-BOUNDARY_WARNING = "clipped boundaries create artificial dead-ends; buffered download is planned"
 
 
 def _log(message):
@@ -95,77 +93,52 @@ def _orient_arc_geometries(graph):
     return reversed_count
 
 
-def load_and_clean(config, *, undirected=False, enforce_dead_end_guard=True):
-    # Extend, never replace: retain OSMnx defaults and make repeated runs idempotent.
+def _node_identifier(value):
+    try:
+        number = int(value)
+        return number if str(number) == str(value) else str(value)
+    except (ValueError, TypeError):
+        return str(value)
+
+
+def load_and_clean(config):
     ox.settings.useful_tags_way = list(dict.fromkeys([*ox.settings.useful_tags_way, *EXTRA_WAY_TAGS]))
     source = config.input.source
-    input_meta = config.input.model_dump(mode="json", exclude_none=True)
-    boundary = None
-    warnings = []
-    applied = "as-provided"
-    download_utc = None
+    path = config.input.path.expanduser().resolve()
+    if not path.is_file():
+        raise ValueError(f"input.path does not exist: {path}")
     _log(f"Loading {source} network")
-    kwargs = {
-        "network_type": config.network.type, "custom_filter": config.network.custom_filter,
-        "simplify": False, "retain_all": True,
-    }
-    if source in {"polygon", "osm_xml", "graphml"}:
-        path = config.input.path.resolve()
-        if not path.is_file():
-            raise ValueError(f"input.path does not exist: {path}")
-        input_meta["path"] = str(path)
-    if source == "place":
-        try:
-            boundary = ox.geocode_to_gdf(config.input.place).to_crs(4326).geometry.union_all()
-        except TypeError as exc:
-            raise ValueError(
-                f"input.place: {config.input.place!r} must resolve to a boundary polygon; "
-                "choose a mapped administrative area or use input.source: bbox/polygon"
-            ) from exc
-        graph = ox.graph_from_place(config.input.place, **kwargs)
-    elif source == "polygon":
-        frame = gpd.read_file(path)
-        if frame.crs is None:
-            raise ValueError("input.path: boundary polygons must declare a CRS")
-        if frame.empty or not frame.geom_type.isin(["Polygon", "MultiPolygon"]).all():
-            raise ValueError("input.path: expected boundary polygons, not road lines or points")
-        boundary = frame.to_crs(4326).geometry.union_all()
-        if boundary.is_empty or not boundary.is_valid:
-            raise ValueError("input.path: boundary polygon is empty or invalid")
-        graph = ox.graph_from_polygon(boundary, **kwargs)
-    elif source == "bbox":
-        boundary = box(*config.input.bbox)
-        graph = ox.graph_from_bbox(bbox=config.input.bbox, **kwargs)
-    elif source == "osm_xml":
-        # Filter before simplification: aggregating access/highway tags first can
-        # combine a legal road with a forbidden one and discard both.
+    if source == "osm_xml":
         graph = ox.graph_from_xml(path, simplify=False, retain_all=True)
     else:
-        graph = ox.load_graphml(filepath=path)
-    if source in {"place", "polygon", "bbox"}:
-        download_utc = datetime.now(timezone.utc).isoformat()
-        applied = "custom_filter" if config.network.custom_filter is not None else config.network.type
+        graph = ox.load_graphml(filepath=path, node_dtypes={"osmid": _node_identifier})
     if graph.number_of_edges() == 0:
         raise ValueError("input: network has no road edges")
-    if undirected:
-        # Validation against AP2 ignores one-way restrictions before simplification
-        # and component selection, not merely when computing centralities.
-        graph = ox.convert.to_undirected(graph).to_directed()
-        reversed_geometries = _orient_arc_geometries(graph)
+    if graph.graph.get("crs") is None:
+        raise ValueError("road graph must declare a CRS")
+    for node, data in graph.nodes(data=True):
+        try:
+            valid = all(math.isfinite(float(data[key])) for key in ("x", "y"))
+        except (KeyError, ValueError, TypeError):
+            valid = False
+        if not valid:
+            raise ValueError(f"road node {node}: finite x,y coordinates are required")
+    for u, v, data in graph.edges(data=True):
+        try:
+            length = float(data["length"])
+        except (KeyError, ValueError, TypeError) as exc:
+            raise ValueError("road edges require numeric length in metres") from exc
+        if not math.isfinite(length) or length < 0 or (u != v and length == 0):
+            raise ValueError("non-loop road lengths must be finite and positive metres")
     cleaning = {"raw": _counts(graph)}
+    applied = "as-provided"
     if source == "osm_xml":
         if config.network.type == "drive":
             graph = _filter_drive(graph)
             applied = "drive"
-        else:
-            warnings.append(f"XML network.type={config.network.type} cannot be applied; keeping as-provided")
-        if config.network.custom_filter is not None:
-            warnings.append("network.custom_filter cannot be applied to XML; using the XML network.type rules")
         if graph.number_of_edges() == 0:
             raise ValueError("network.type: XML drive filter removed all road edges")
         cleaning["filtered"] = _counts(graph)
-    elif source == "graphml" and config.network.custom_filter is not None:
-        warnings.append("network.custom_filter cannot be applied to GraphML; keeping as-provided")
     _log("Simplifying and projecting network")
     if graph.graph.get("simplified") is not True:
         graph = ox.simplify_graph(graph)
@@ -174,68 +147,34 @@ def load_and_clean(config, *, undirected=False, enforce_dead_end_guard=True):
     graph = ox.project_graph(graph)
     cleaning["simplified"] = _counts(graph)
     before = _dead_ends(graph)
+    cleaning["arc_geometries_reoriented"] = _orient_arc_geometries(graph)
     if config.cleaning.consolidate:
         _log(f"Consolidating intersections (tolerance {config.cleaning.tolerance_m:g} m)")
         nx.set_node_attributes(graph, ox.stats.count_streets_per_node(graph), "street_count")
-        graph = ox.consolidate_intersections(
-            graph, tolerance=config.cleaning.tolerance_m, rebuild_graph=True,
-            dead_ends=True, reconnect_edges=True,
-        )
-        if enforce_dead_end_guard:
-            _guard_dead_ends(before, _dead_ends(graph))
-        else:
-            try:
-                _guard_dead_ends(before, _dead_ends(graph))
-            except ValueError as exc:
-                warnings.append(str(exc))
+        graph = ox.consolidate_intersections(graph, tolerance=config.cleaning.tolerance_m,
+            rebuild_graph=True, dead_ends=True, reconnect_edges=True)
+        _guard_dead_ends(before, _dead_ends(graph))
+    if not graph:
+        raise ValueError("cleaning: consolidation left an empty graph")
     cleaning["consolidated"] = _counts(graph)
     cleaning["consolidation_enabled"] = config.cleaning.consolidate
     cleaning["dead_ends"] = {"before": before, "after": _dead_ends(graph)}
-    if not graph:
-        raise ValueError("cleaning: consolidation left an empty graph")
-    _log("Keeping largest connected component" if undirected else "Keeping largest strongly connected component")
-    component_count = (nx.number_weakly_connected_components(graph) if undirected
-                       else nx.number_strongly_connected_components(graph))
-    graph = ox.truncate.largest_component(graph, strongly=not undirected)
+    component_count = nx.number_strongly_connected_components(graph)
+    # Stable component ties preserve reproducibility for identically supplied inputs.
+    from .links import node_key
+    component = min(nx.strongly_connected_components(graph),
+        key=lambda nodes: (-len(nodes), tuple(sorted(node_key(node) for node in nodes))))
+    graph = graph.subgraph(component).copy()
     if graph.number_of_edges() == 0:
         raise ValueError("cleaning: largest strongly connected component has no road edges")
     cleaning["final"] = _counts(graph)
     length_before = cleaning["consolidated"]["total_length_km"]
-    length_dropped = max(0, length_before - cleaning["final"]["total_length_km"])
-    cleaning["dropped_components"] = {
-        "count": component_count - 1,
+    dropped = max(0, length_before - cleaning["final"]["total_length_km"])
+    cleaning["dropped_components"] = {"count": component_count - 1,
         "nodes_dropped": cleaning["consolidated"]["node_count"] - len(graph),
-        "length_dropped_km": length_dropped,
-        "length_dropped_pct": 100 * length_dropped / length_before if length_before else 0,
-    }
-    if cleaning["dropped_components"]["length_dropped_pct"] > 5:
-        warnings.append("check boundary clipping / one-way slivers")
-    warnings.append(BOUNDARY_WARNING)
-    cleaning["warnings"] = warnings
-    if undirected:
-        cleaning["direction_handling"] = "one-way restrictions ignored before simplification; largest connected component"
-        cleaning["dead_end_guard_enforced"] = enforce_dead_end_guard
-        cleaning["arc_geometries_reoriented"] = reversed_geometries
-    for warning in warnings:
-        _log(f"WARNING: {warning}")
-    return graph, {
-        "input": input_meta, "osm_download_utc": download_utc,
-        "network_type_applied": applied,
-        "study_boundary_wkt": boundary.wkt if boundary is not None else None,
-    }, cleaning
-
-
-def cleaning_report(cleaning):
-    lines = ["Cleaning", "Stage            Nodes      Links     Length (km)"]
-    for stage in ("raw", "filtered", "simplified", "consolidated", "final"):
-        if stage in cleaning:
-            row = cleaning[stage]
-            lines.append(f"{stage:<14} {row['node_count']:>7} {row['link_count']:>10} {row['total_length_km']:>15.3f}")
-    dropped = cleaning["dropped_components"]
-    lines.append(
-        f"Dropped components: {dropped['count']}; nodes: {dropped['nodes_dropped']}; "
-        f"length: {dropped['length_dropped_km']:.3f} km ({dropped['length_dropped_pct']:.2f}%)"
-    )
-    lines.append(f"Degree-1 nodes: {cleaning['dead_ends']['before']} -> {cleaning['dead_ends']['after']}")
-    lines.extend(f"WARNING: {message}" for message in cleaning["warnings"])
-    return lines
+        "length_dropped_km": dropped, "length_dropped_pct": 100 * dropped / length_before if length_before else 0}
+    cleaning["warnings"] = (["check boundary clipping / one-way slivers"]
+        if cleaning["dropped_components"]["length_dropped_pct"] > 5 else [])
+    identify_links(graph, cleaning_fingerprint(path, config.network, config.cleaning))
+    return graph, {"input": {**config.input.model_dump(mode="json", exclude_none=True), "path": str(path)},
+        "network_type_applied": applied, "osm_download_utc": None, "study_boundary_wkt": None}, cleaning

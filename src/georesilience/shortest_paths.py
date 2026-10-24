@@ -2,14 +2,12 @@
 
 import math
 import os
-from dataclasses import dataclass
 
 import numpy as np
 import psutil
 from joblib import Parallel, delayed, parallel_config
 from scipy.sparse import csr_matrix
 from scipy.sparse.csgraph import dijkstra
-from scipy.spatial.distance import cdist
 
 GIB = 1024**3
 
@@ -23,6 +21,8 @@ def resolve_resources(n_jobs="auto", max_memory_gb="auto"):
             raise ValueError("SLURM_CPUS_PER_TASK must be a positive integer") from exc
     if not isinstance(n_jobs, int) or n_jobs < 1:
         raise ValueError("analysis.n_jobs must be a positive integer or auto")
+    if max_memory_gb != "auto" and (not math.isfinite(float(max_memory_gb) * GIB) or float(max_memory_gb) <= 0):
+        raise ValueError("analysis.max_memory_gb must be finite and positive")
     budget = (int(psutil.virtual_memory().available * 0.5) if max_memory_gb == "auto"
               else int(float(max_memory_gb) * GIB))
     if budget < 1:
@@ -35,16 +35,6 @@ def fits_in_memory(n, dtype=np.float64, *, budget_bytes=None):
     if budget_bytes is None:
         budget_bytes = int(psutil.virtual_memory().available * 0.5)
     return n * n * np.dtype(dtype).itemsize <= budget_bytes
-
-
-def aggregate_efficiency(inverse_sums, weights=None):
-    """Aggregate ordered-pair reciprocal distances with optional node masses."""
-    inverse_sums = np.asarray(inverse_sums, dtype=float)
-    weights = np.ones(len(inverse_sums)) if weights is None else np.asarray(weights, dtype=float)
-    if weights.shape != inverse_sums.shape or not np.isfinite(weights).all() or (weights < 0).any():
-        raise ValueError("node weights must be finite, nonnegative and match the row sums")
-    denominator = float(weights.sum() ** 2 - weights @ weights)
-    return float(weights @ inverse_sums / denominator) if denominator > 0 else 0.0
 
 
 def _reduce_chunk(graph, sources, reducer, directed, limit):
@@ -97,44 +87,3 @@ class ShortestPathEngine:
                           pre_dispatch=min(self.n_jobs, count), batch_size=1) as parallel:
                 yield from parallel(delayed(_reduce_chunk)(self.graph, chunk, reducer, directed, limit)
                                     for chunk in chunks)
-
-
-@dataclass
-class CentralityReducer:
-    """Reduce each row to closeness, straightness and inverse-distance sum.
-
-    Target weights default to ones. Zero weights are supported for future
-    population aggregates. Unreachable targets contribute zero to reciprocal
-    distances/straightness and make ordinary closeness zero if weighted.
-    """
-
-    coordinates: np.ndarray
-    weights: np.ndarray | None = None
-
-    def __post_init__(self):
-        self.coordinates = np.asarray(self.coordinates, dtype=np.float64)
-        if self.coordinates.ndim != 2 or self.coordinates.shape[1] != 2:
-            raise ValueError("coordinates must have shape (N, 2)")
-        if not np.isfinite(self.coordinates).all():
-            raise ValueError("node coordinates must be finite")
-        n = len(self.coordinates)
-        self.weights = (np.ones(n) if self.weights is None else np.asarray(self.weights, dtype=float))
-        if self.weights.shape != (n,) or not np.isfinite(self.weights).all() or (self.weights < 0).any():
-            raise ValueError("node weights must be finite, nonnegative and match the node count")
-
-    def __call__(self, distances, sources):
-        weights = self.weights
-        denominator = weights.sum() - weights[sources]
-        # Avoid inf*0 for zero-population unreachable targets.
-        distances[:, weights == 0] = 0
-        distance_sum = distances @ weights
-        closeness = np.divide(denominator, distance_sum, out=np.zeros(len(sources)),
-                              where=distance_sum > 0)
-        # Reuse the distance block as its reciprocal: diagonal and unreachable = 0.
-        np.divide(1.0, distances, out=distances, where=distances > 0)
-        inverse_sum = distances @ weights
-        euclidean = cdist(self.coordinates[sources], self.coordinates)
-        euclidean *= distances
-        straightness = np.divide(euclidean @ weights, denominator, out=np.zeros(len(sources)),
-                                 where=denominator > 0)
-        return np.column_stack((closeness, straightness, inverse_sum))

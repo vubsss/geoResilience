@@ -95,9 +95,11 @@ class FreeFlowTimeModel:
                 data.pop("maxspeed", None)
         metadata = {"time_model": "free_flow", "time_units": "seconds",
                     "time_function": "3.6 * length_m / speed_kph",
-                    "assumptions": "free-flow speeds; no traffic (Tier 4)",
+                    "assumptions": "free-flow speeds; no congestion model",
                     "invalid_maxspeed_edges": invalid}
-        if not parsed and config.highway_speeds_kph is None:
+        matching_table = any(data["highway"] in (config.highway_speeds_kph or {})
+                             for _, _, data in working.edges(data=True))
+        if not parsed and not matching_table:
             return PreparedTimeModel({}, {**metadata, "status": "skipped: no speed data",
                                           "maxspeed_coverage": None})
         working = ox.routing.add_edge_speeds(working, hwy_speeds=config.highway_speeds_kph)
