@@ -72,4 +72,9 @@ Complete: 25 criticality and existing closure tests passed. Every local closure 
 
 Complete: Added original service share/AUC in the same attack SCC and directed P_i*w_j reachability/time reliability on existing event draws and p0 sweeps. Existing attack/time/reliability regressions and certain-closure co-location smoke checks passed; disabled public outputs unchanged.
 
-Next: CN-T07.
+
+## CN-T07
+
+Complete: 56 service/event/attack tests passed. Independent seeded-event oracle confirms original P_i*w_j demand and exact directed/co-located outcomes. Old views/order unchanged, worker/p0 consistency, SCC ties, conditional CSV, raw AUC, zero masses and confidence bounds verified.
+
+Next: CN-I08 (include user-requested optional population with uniform demand fallback).
