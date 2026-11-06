@@ -8,7 +8,6 @@ from itertools import islice
 from pathlib import Path
 
 import numpy as np
-from scipy.sparse import csr_matrix
 from scipy.sparse.csgraph import connected_components, dijkstra
 
 from .config import TravelTimeConfig
@@ -16,7 +15,8 @@ from .failure_probabilities import probabilities_at_p0
 from .metrics import POPULATION_REASON, PairUniverse
 from .od import OD_COLUMNS, ODInputs
 from .removal import ActiveEdgeGraph
-from .time_models import TimeContext, prepare_time_model
+from .time_models import prepare_time_model
+from .time_routing import TimeTopology
 
 CONNECTIVITY = "fraction of original distinct ordered node pairs mutually reachable in the same directed SCC"
 TRAVEL_TIME = "fraction of original distinct ordered node pairs with finite event travel time <= (1 + threshold) times intact travel time"
@@ -61,40 +61,6 @@ def _connectivity(matrix, universe):
         weighted /= universe.denominator_pop
     return (structural, min(1., max(0., weighted))), labels
 
-
-class _TimeTopology:
-    def __init__(self, graph, links, prepared):
-        index = {node: i for i, node in enumerate(graph)}
-        arcs = sorted((index[u], index[v], position, (u, v, key))
-            for position, row in enumerate(links) for u, v, key in row["_edges"])
-        self.rows = np.array([a[0] for a in arcs], dtype=int)
-        self.cols = np.array([a[1] for a in arcs], dtype=int)
-        self.positions = np.array([a[2] for a in arcs], dtype=int)
-        self.edges = [a[3] for a in arcs]
-        self.ids = [row["link_id"] for row in links]
-        self.n, self.prepared = len(graph), prepared
-        self.baseline_values = self.values(prepared.costs(TimeContext()))
-
-    def values(self, mapping):
-        try:
-            values = np.array([float(mapping[edge]) for edge in self.edges])
-        except (KeyError, TypeError, ValueError, OverflowError) as exc:
-            raise ValueError("travel_time: provider must supply numeric seconds for every directed non-loop edge") from exc
-        if not np.isfinite(values).all() or (values <= 0).any():
-            raise ValueError("travel_time: edge seconds must be finite and strictly positive")
-        return values
-
-    def csr(self, up, sample_index=None):
-        values = self.baseline_values
-        if sample_index is not None and self.prepared.scenario_times is not None:
-            closed = frozenset(link for link, state in zip(self.ids, up) if not state)
-            values = self.values(self.prepared.costs(TimeContext(sample_index, closed)))
-        keep = up[self.positions]
-        rows, cols, costs = self.rows[keep], self.cols[keep], values[keep]
-        if len(rows):
-            starts = np.flatnonzero(np.r_[True, (rows[1:] != rows[:-1]) | (cols[1:] != cols[:-1])])
-            rows, cols, costs = rows[starts], cols[starts], np.minimum.reduceat(costs, starts)
-        return csr_matrix((costs, (rows, cols)), shape=(self.n, self.n))
 
 
 def _time_success(baseline, damaged, threshold):
@@ -150,7 +116,7 @@ def compute_reliability(graph, links, population, user_probabilities, *, p0=.01,
     time_reason = None if prepared.summary["status"] == "computed" else prepared.summary["status"]
     evaluated_samples = max(connectivity_samples, travel_time_samples if not time_reason else 0)
     topology = ActiveEdgeGraph(graph, active, directed=True)
-    times = None if time_reason else _TimeTopology(graph, active, prepared)
+    times = None if time_reason else TimeTopology(graph, active, prepared)
     baseline_matrix = times.csr(np.ones(len(active), dtype=bool)) if times else None
     cache_bytes = universe.n ** 2 * 8
     cache = dijkstra(baseline_matrix, directed=True) if times and cache_bytes + row_bytes <= budget_bytes // 2 else None

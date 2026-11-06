@@ -37,4 +37,9 @@ Complete: Count importance and category node fields implemented independently of
 
 Complete: 51 service-weight and existing baseline/population tests passed. Explicit directed path enumeration checks diagonals, zero masses, fixed denominators, category coefficients and capacity scaling. Fixed transit through an isolated node exposed by the oracle.
 
-Next: CN-I04.
+
+## CN-I04
+
+Complete: Extracted reusable seconds topology with link closures, retained node isolation, transpose queries and budgeted static reductions. Missing times remain unavailable; dynamic custom providers explicitly rejected for 2SFCA. Existing time/reliability regression suite passed.
+
+Next: CN-T04.
