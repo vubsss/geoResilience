@@ -67,4 +67,9 @@ Complete: Expanded paired candidate rules for positive-weight service nodes and 
 
 Complete: 25 criticality and existing closure tests passed. Every local closure matches independent full NetworkX recomputation; competition gains do not cancel shortfall; node supply/demand semantics, road co-location, category baselines, exact screened/all candidates, null omissions and rankings verified.
 
-Next: CN-I07.
+
+## CN-I07
+
+Complete: Added original service share/AUC in the same attack SCC and directed P_i*w_j reachability/time reliability on existing event draws and p0 sweeps. Existing attack/time/reliability regressions and certain-closure co-location smoke checks passed; disabled public outputs unchanged.
+
+Next: CN-T07.
