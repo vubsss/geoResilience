@@ -125,6 +125,7 @@ class ServiceCategoryConfig(StrictModel):
 class ServicesConfig(StrictModel):
     facilities_csv: Path
     mode: Literal["weights_only", "sfca"] = "weights_only"
+    population_importance: float = Field(default=1, ge=0, allow_inf_nan=False)
     snap_max_m: float = Field(default=500, ge=0, allow_inf_nan=False)
     school: ServiceCategoryConfig = Field(default_factory=ServiceCategoryConfig)
     hospital: ServiceCategoryConfig = Field(default_factory=ServiceCategoryConfig)

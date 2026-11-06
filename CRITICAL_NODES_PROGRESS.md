@@ -77,4 +77,9 @@ Complete: Added original service share/AUC in the same attack SCC and directed P
 
 Complete: 56 service/event/attack tests passed. Independent seeded-event oracle confirms original P_i*w_j demand and exact directed/co-located outcomes. Old views/order unchanged, worker/p0 consistency, SCC ties, conditional CSV, raw AUC, zero masses and confidence bounds verified.
 
-Next: CN-I08 (include user-requested optional population with uniform demand fallback).
+
+## CN-I08
+
+Complete: Integrated opt-in service JSON v2, GIS facilities/node/link fields, reports/rankings, service figures, consumed hashes, replay and staged overwrite. User refinement adds normalized population share to normalized service points with configurable coefficient and uniform demand when raster absent. 97 existing/input/service checks and population/uniform end-to-end replay smoke checks passed.
+
+Next: CN-T08.

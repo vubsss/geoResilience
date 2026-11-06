@@ -52,7 +52,7 @@ class _CatchmentReducer:
 
 
 def compute_sfca(prepared, population, config, routing=None, *, removed_links=(),
-                 isolated_nodes=(), n_jobs=1, budget_bytes=2**26):
+                 isolated_nodes=(), n_jobs=1, budget_bytes=2**26, demand_basis="population"):
     """Recompute catchment demand and ratios using original retained population.
 
     Node closures disable attached supply and that origin's access; link closures
@@ -75,11 +75,14 @@ def compute_sfca(prepared, population, config, routing=None, *, removed_links=()
             'service category not supplied' if not facilities else
             'zero original population; 2SFCA demand is undefined' if total == 0 else
             'static travel times unavailable' if routing is None else routing.reason)
+        demand_unit = 'resident' if demand_basis == 'population' else 'uniform node demand unit'
         summary = {'method_version': METHOD_VERSION, 'status': 'unavailable' if reason else 'computed',
-            'reason': reason, 'capacity_unit': unit, 'raw_unit': f'{unit} per resident' if unit else None,
-            'display_unit': f'{unit} per 1,000 residents' if unit else None,
+            'reason': reason, 'capacity_unit': unit, 'raw_unit': f'{unit} per {demand_unit}' if unit else None,
+            'display_unit': f'{unit} per 1,000 {demand_unit}s' if unit else None,
             'catchment_minutes': settings.catchment_minutes, 'catchment_seconds': settings.catchment_seconds,
-            'demand': 'allocated total population; school demand is an all-resident proxy',
+            'demand_basis': demand_basis,
+            'demand': ('allocated total population; school demand is an all-resident proxy' if demand_basis == 'population'
+                else 'one uniform demand unit per retained node; population data absent'),
             'direction': 'resident-to-facility', 'binary_catchment': True, 'inclusive_threshold': True,
             'equal_node_mean': None, 'population_mean': None, 'equal_node_mean_per_1000': None,
             'population_mean_per_1000': None, 'zero_access_population_share': None,

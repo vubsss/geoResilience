@@ -28,7 +28,7 @@ def _largest_component(graph):
         -len(component), tuple(sorted(node_key(node) for node in component))), default=set())
 
 
-def compute_targeted_attack(graph, links, population, fraction=.20, steps=50, order="adaptive", seed=42, *, service_weights=None):
+def compute_targeted_attack(graph, links, population, fraction=.20, steps=50, order="adaptive", seed=42, *, service_weights=None, node_importance=None):
     """Remove floor(fraction * M) links; recompute adaptive rank after each link.
 
     Export at most ``steps`` post-removal points and integrate only that exported
@@ -51,6 +51,8 @@ def compute_targeted_attack(graph, links, population, fraction=.20, steps=50, or
     node_population = dict(zip(original_nodes, population))
     services = ServiceUniverse(population, service_weights) if service_weights is not None else None
     node_services = dict(zip(original_nodes, services.destinations)) if services is not None else {}
+    importance = ServiceUniverse(population, node_importance) if node_importance is not None else None
+    importance_by_node = dict(zip(original_nodes, importance.destinations)) if importance is not None else {}
     active = sorted((row for row in links if not row["is_self_loop"]),
                     key=lambda row: (row["link_uid"], row["link_id"]))
     if (len({row["link_uid"] for row in active}) != len(active)
@@ -89,6 +91,10 @@ def compute_targeted_attack(graph, links, population, fraction=.20, steps=50, or
             curve[-1]["service_share"] = (math.fsum(float(node_services[node]) for node in sorted(component, key=node_key))
                 if services.service_total else None)
 
+        if importance is not None:
+            curve[-1]["node_importance_share"] = (math.fsum(float(importance_by_node[node]) for node in sorted(component, key=node_key))
+                if importance.service_total else None)
+
     def ranked(rows):
         _, scores, _, _ = _structural(structural_nodes, rows)
         return sorted(rows, key=lambda row: (-scores[row["link_id"]], row["link_uid"], row["link_id"]))
@@ -121,6 +127,10 @@ def compute_targeted_attack(graph, links, population, fraction=.20, steps=50, or
         auc = float(np.trapezoid([r["service_share"] for r in curve], x)) if horizon and services.service_total else None
         summary["service_weighted"] = score(auc, definition + "; original service importance in the same node-selected SCC",
             "zero original service importance mass" if not services.service_total else "no links removed")
+    if importance is not None:
+        auc = float(np.trapezoid([r['node_importance_share'] for r in curve], x)) if horizon and importance.service_total else None
+        summary['node_importance_weighted'] = score(auc, definition + '; combined population and service node importance in the same SCC',
+            'zero combined node importance' if not importance.service_total else 'no links removed')
     return AttackResult(curve, summary, removal_order)
 
 
@@ -129,6 +139,8 @@ def write_curve(result, path):
     path.parent.mkdir(parents=True, exist_ok=True)
     with path.open("w", encoding="utf-8", newline="") as stream:
         columns = (*CURVE_COLUMNS, "service_share") if result.curve and "service_share" in result.curve[0] else CURVE_COLUMNS
+        if result.curve and "node_importance_share" in result.curve[0]:
+            columns = (*columns, "node_importance_share")
         writer = csv.DictWriter(stream, fieldnames=columns)
         writer.writeheader()
         writer.writerows(result.curve)

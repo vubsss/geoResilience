@@ -111,3 +111,27 @@ hospital capacity; full scenario 2SFCA and age-specific demand are deferred.
 ## Verification
 
 Use tiny deterministic XML/GraphML/raster fixtures and exact formula checks for directed closures, bridges, parallel roads, screened omissions, removed-node pairs, zero-population nodes and all-zero population. Test template round trips and mismatches, time availability, seeded worker independence, output schema, safe overwrite and an offline end-to-end run. The complete test suite forbids network access. Small deterministic checked-in inputs live under `tests/fixtures/tiny`; variant fixtures are generated under test temporary directories.
+
+
+### Population contribution to node importance (user refinement)
+
+Service-enabled runs also publish combined node importance:
+`I_i = population_importance * P_i/sum(P) + w_i/sum(w)`, where `w_i` is the
+category-weighted facility count above. Each zero-total component contributes
+zero. `--population-importance` is finite/nonnegative and defaults to 1; zero
+removes the population component. Normalize the components before addition so
+resident counts do not overwhelm institutional points merely through unit scale.
+Export `node_importance`, `importance_population_component` and
+`importance_service_component` separately. The attack adds the original combined
+importance share in the same selected SCC and its raw AUC. Count service weights,
+capacity-based 2SFCA and population-origin demand remain separately interpretable.
+
+For service-enabled runs a directory may omit the population raster; then each
+retained node receives one uniform demand unit, making the population importance
+component uniform. This is an explicit no-data assumption, never inferred resident
+counts. A supplied all-zero raster remains zero population, with undefined 2SFCA;
+it never triggers the fallback. More than one raster is still an input error.
+No-service CLI runs retain the existing requirement for exactly one raster.
+Record the demand basis and units in JSON/text/GIS/manifest, using supply per
+uniform node demand unit for fallback 2SFCA. Input hashes and replay include only
+files actually supplied and consumed.

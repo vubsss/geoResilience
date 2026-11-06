@@ -139,3 +139,20 @@ def service_node_fields(prepared, weights):
                 f'{category}_unknown_capacity_count': int(prepared.unknown_counts[category][i])})
         result[node] = row
     return result
+
+
+def combined_node_importance(population, service_weights, population_importance=1):
+    """Add normalized resident mass and service points, keeping both visible.
+
+    I_i = alpha_P * P_i/sum(P) + w_i/sum(w). Uniform fallback is supplied as
+    P_i=1, never substituted for a supplied all-zero population dataset.
+    """
+    from .service_metrics import ServiceUniverse
+    universe = ServiceUniverse(population, service_weights)
+    if not math.isfinite(population_importance) or population_importance < 0:
+        raise ValueError('population importance must be finite and nonnegative')
+    population_component = population_importance * universe.origins
+    combined = population_component + universe.destinations
+    if not np.isfinite(combined).all() or not math.isfinite(float(combined.sum())):
+        raise ValueError('combined node importance must be finite')
+    return combined, population_component, universe.destinations.copy()

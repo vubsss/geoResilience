@@ -7,6 +7,9 @@ import numpy as np
 FIGURE_FILENAMES = ("node_betweenness.png", "edge_betweenness.png", "hansen_accessibility.png",
                     "information_centrality.png", "attack_curve.png", "reliability.png")
 
+SERVICE_FIGURE_FILENAMES = ("service_weight.png", "node_importance.png", "school_sfca.png", "hospital_sfca.png",
+    "school_criticality.png", "hospital_criticality.png")
+
 
 def write_figures(nodes, edges, attack, summary, folder):
     import matplotlib
@@ -36,6 +39,10 @@ def write_figures(nodes, edges, attack, summary, folder):
     ax.plot(x, [row["node_share"] for row in attack.curve], label="Node share")
     if attack.curve[0]["population_share"] is not None:
         ax.plot(x, [row["population_share"] for row in attack.curve], label="Population in same component")
+    for field, label in (('service_share', 'Service points in same component'),
+                         ('node_importance_share', 'Combined node importance in same component')):
+        if field in attack.curve[0] and attack.curve[0][field] is not None:
+            ax.plot(x, [row[field] for row in attack.curve], label=label)
     ax.set(xlabel="Fraction of physical links removed", ylabel="Largest SCC share", ylim=(0, 1.05))
     ax.legend()
     fig.tight_layout()
@@ -57,3 +64,30 @@ def write_figures(nodes, edges, attack, summary, folder):
     fig.tight_layout()
     fig.savefig(folder / "reliability.png", dpi=140)
     plt.close(fig)
+
+    if summary.get('services'):
+        _write_service_figures(nodes, summary['services'], folder)
+
+
+def _write_service_figures(nodes, services, folder):
+    import matplotlib.pyplot as plt
+    maps = [('service_weight', 'service_weight.png', 'Service points (category-weighted counts)'),
+        ('node_importance', 'node_importance.png', 'Node importance (population + service shares)')]
+    for category in ('school', 'hospital'):
+        unit = services['sfca'][category]['display_unit'] or 'unavailable supply unit'
+        maps.extend([(f'{category}_sfca_per_1000', f'{category}_sfca.png', f'{category.title()} 2SFCA ({unit})'),
+            (f'{category}_access_shortfall', f'{category}_criticality.png', f'{category.title()} access shortfall (fraction)')])
+    for column, filename, title in maps:
+        fig, ax = plt.subplots(figsize=(7,6))
+        values = nodes[column].astype(float)
+        if np.isfinite(values).any():
+            nodes.assign(**{column: values}).plot(column=column, ax=ax, legend=True, cmap='viridis',
+                missing_kwds={'color': 'lightgrey'})
+        else:
+            nodes.plot(ax=ax, color='lightgrey')
+            ax.text(.5, .05, 'Unavailable or not evaluated', transform=ax.transAxes, ha='center')
+        ax.set_title(title)
+        ax.set_axis_off()
+        fig.tight_layout()
+        fig.savefig(folder / filename, dpi=140)
+        plt.close(fig)

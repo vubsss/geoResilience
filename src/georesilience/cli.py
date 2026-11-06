@@ -37,13 +37,14 @@ def _network_flags(parser):
 
 def _service_settings(args):
     options = (args.service_mode, args.service_importance, args.service_catchment_minutes,
-               args.service_unit, args.facility_snap_max_m)
+               args.service_unit, args.facility_snap_max_m, args.population_importance)
     if args.facilities is None:
         if any(value is not None for value in options):
             raise ValueError("service options require --facilities PATH")
         return None
     values = {"facilities_csv": args.facilities,
         "mode": "sfca" if args.service_mode == "2sfca" else "weights_only",
+        "population_importance": 1 if args.population_importance is None else args.population_importance,
         "snap_max_m": 500 if args.facility_snap_max_m is None else args.facility_snap_max_m,
         "school": {}, "hospital": {}}
     for entries, option, field in ((args.service_importance, "--service-importance", "importance"),
@@ -69,6 +70,7 @@ def main(argv=None):
     template = commands.add_parser("failures-template", help="export fingerprint-bound physical-link probabilities")
     _network_flags(template)
     analysis.add_argument("--no-figures", action="store_true")
+    analysis.add_argument("--population-importance", type=float, help="population-share coefficient in combined node importance (default: 1; requires --facilities)")
     analysis.add_argument("--facilities", type=Path, help="explicit WGS84 school/hospital CSV")
     analysis.add_argument("--service-mode", choices=("weights-only", "2sfca"), help="default: weights-only; 2sfca requires capacities and catchments")
     analysis.add_argument("--service-importance", action="append", metavar="TYPE=WEIGHT", help="nonnegative school/hospital importance; default 1 each")
@@ -97,7 +99,8 @@ def main(argv=None):
     args = parser.parse_args(argv)
     try:
         config = directory_config(args.input_dir, boundary=args.boundary, network_type=args.network_type,
-            consolidation_m=args.consolidation_m, consolidate=not args.no_consolidation, snap_max_m=args.snap_max_m)
+            consolidation_m=args.consolidation_m, consolidate=not args.no_consolidation, snap_max_m=args.snap_max_m,
+            allow_missing_population=args.command == "run" and args.facilities is not None)
         if args.command == "failures-template":
             from .failure_probabilities import export_edge_template
             from .network import load_and_clean
