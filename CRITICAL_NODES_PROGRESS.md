@@ -62,4 +62,9 @@ Complete: 25 2SFCA/routing tests passed. Independent NetworkX oracle verifies pa
 
 Complete: Expanded paired candidate rules for positive-weight service nodes and incident links. Closure recomputation publishes category shortfall, newly unserved share, damaged means, signed raw mean changes, combined losses, evaluated flags/reasons and deterministic rankings. Existing closure suites plus smoke checks passed.
 
-Next: CN-T06.
+
+## CN-T06
+
+Complete: 25 criticality and existing closure tests passed. Every local closure matches independent full NetworkX recomputation; competition gains do not cancel shortfall; node supply/demand semantics, road co-location, category baselines, exact screened/all candidates, null omissions and rankings verified.
+
+Next: CN-I07.
