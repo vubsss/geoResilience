@@ -92,4 +92,9 @@ Complete: 59 focused pipeline/legacy tests passed (18 service cases). XML/GraphM
 
 Complete: Documented all service settings, formula/units/output fields, population-plus-service importance, uniform fallback, 2SFCA/criticality/scenario distinctions, provenance and real-study assumptions. Added validated synthetic capacity-aware and location-only CSV examples plus fixture instructions. CLI help and example input contracts checked.
 
-Next: CN-T09.
+
+## CN-T09
+
+Complete: All 349 offline tests passed after visual corrections. Documented examples, GIS/provenance/report inspection, PDF page-8 formula review and six service-map/attack visual checks complete. Reproducible 4,000-node/240-facility workload used 18 chunks per pass at 8 MiB budget; worker-process RSS/USS measured, serial/parallel agreement and zero conservation residuals verified. See CRITICAL_NODES_ACCEPTANCE.md.
+
+Next: None — all 18 tickets complete.

@@ -70,6 +70,7 @@ def write_figures(nodes, edges, attack, summary, folder):
 
 
 def _write_service_figures(nodes, services, folder):
+    import textwrap
     import matplotlib.pyplot as plt
     maps = [('service_weight', 'service_weight.png', 'Service points (category-weighted counts)'),
         ('node_importance', 'node_importance.png', 'Node importance (population + service shares)')]
@@ -81,12 +82,14 @@ def _write_service_figures(nodes, services, folder):
         fig, ax = plt.subplots(figsize=(7,6))
         values = nodes[column].astype(float)
         if np.isfinite(values).any():
+            # Explicit bounds keep constant fields consistent with the colourbar.
+            maximum = 1. if column.endswith('_access_shortfall') else max(float(values.max()), 1e-12)
             nodes.assign(**{column: values}).plot(column=column, ax=ax, legend=True, cmap='viridis',
-                missing_kwds={'color': 'lightgrey'})
+                vmin=0, vmax=maximum, missing_kwds={'color': 'lightgrey'})
         else:
             nodes.plot(ax=ax, color='lightgrey')
             ax.text(.5, .05, 'Unavailable or not evaluated', transform=ax.transAxes, ha='center')
-        ax.set_title(title)
+        ax.set_title(textwrap.fill(title, width=62))
         ax.set_axis_off()
         fig.tight_layout()
         fig.savefig(folder / filename, dpi=140)
