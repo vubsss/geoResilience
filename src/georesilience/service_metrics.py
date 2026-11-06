@@ -4,6 +4,7 @@ from dataclasses import dataclass
 import math
 
 import numpy as np
+from scipy.sparse import csr_matrix
 
 from .metrics import score
 from .shortest_paths import ShortestPathEngine
@@ -69,6 +70,10 @@ def evaluate_service_matrix(matrix, universe, *, half_distance_km=2, cutoff_fact
     n = universe.n
     if matrix.shape != (n, n):
         raise ValueError('service matrix must retain the original node universe')
+    if len(isolated_nodes):
+        arcs = matrix.tocoo()
+        keep = ~np.isin(arcs.row, isolated_nodes) & ~np.isin(arcs.col, isolated_nodes)
+        matrix = csr_matrix((arcs.data[keep], (arcs.row[keep], arcs.col[keep])), shape=(n, n))
     half = half_distance_km * 1000
     cutoff = half * cutoff_factor
     if not all(math.isfinite(v) and v > 0 for v in (half, cutoff, math.log(2) / half)):

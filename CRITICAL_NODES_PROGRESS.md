@@ -32,4 +32,9 @@ Complete: 70 focused facility/cleaning tests passed. Exact limits, projections, 
 
 Complete: Count importance and category node fields implemented independently of capacity. Directed P_i*w_j reachability and length Hansen include co-location and preserve original closure denominators; independent numeric smoke checks passed.
 
-Next: CN-T03.
+
+## CN-T03
+
+Complete: 51 service-weight and existing baseline/population tests passed. Explicit directed path enumeration checks diagonals, zero masses, fixed denominators, category coefficients and capacity scaling. Fixed transit through an isolated node exposed by the oracle.
+
+Next: CN-I04.
