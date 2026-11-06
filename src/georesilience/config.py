@@ -102,6 +102,40 @@ class PopulationConfig(StrictModel):
     snap_max_m: float = Field(default=500, ge=0, allow_inf_nan=False)
 
 
+class ServiceCategoryConfig(StrictModel):
+    importance: float = Field(default=1, ge=0, allow_inf_nan=False)
+    catchment_minutes: float | None = Field(default=None, gt=0, allow_inf_nan=False)
+    capacity_unit: str | None = Field(default=None, min_length=1)
+
+    @model_validator(mode="after")
+    def validate_category(self):
+        if self.capacity_unit is not None:
+            self.capacity_unit = self.capacity_unit.strip()
+            if not self.capacity_unit:
+                raise ValueError("capacity_unit must be nonempty")
+        if self.catchment_minutes is not None and not math.isfinite(self.catchment_seconds):
+            raise ValueError("catchment in seconds must be finite")
+        return self
+
+    @property
+    def catchment_seconds(self):
+        return None if self.catchment_minutes is None else 60 * self.catchment_minutes
+
+
+class ServicesConfig(StrictModel):
+    facilities_csv: Path
+    mode: Literal["weights_only", "sfca"] = "weights_only"
+    snap_max_m: float = Field(default=500, ge=0, allow_inf_nan=False)
+    school: ServiceCategoryConfig = Field(default_factory=ServiceCategoryConfig)
+    hospital: ServiceCategoryConfig = Field(default_factory=ServiceCategoryConfig)
+
+    @model_validator(mode="after")
+    def validate_services(self):
+        if self.school.importance == self.hospital.importance == 0:
+            raise ValueError("services require at least one positive category importance")
+        return self
+
+
 class RunConfig(StrictModel):
     input: InputConfig
     network: NetworkConfig = Field(default_factory=NetworkConfig)
@@ -113,4 +147,5 @@ class RunConfig(StrictModel):
     travel_time: TravelTimeConfig = Field(default_factory=TravelTimeConfig)
     accessibility: AccessibilityConfig = Field(default_factory=AccessibilityConfig)
     population: PopulationConfig = Field(default_factory=PopulationConfig)
+    services: ServicesConfig | None = None
     output: OutputConfig = Field(default_factory=OutputConfig)

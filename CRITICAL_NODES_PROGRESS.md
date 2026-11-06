@@ -1,0 +1,15 @@
+# Critical nodes implementation handoff
+
+Each ticket gets a separate goal and commit. After committing, use this record
+and the next ticket's acceptance criteria as the fresh working scope.
+The ignored plan/ticket files remain the dependency specification.
+
+## CN-I01 — Contracts and configuration
+
+Implemented optional typed service settings, CLI flags, canonical string-ID CSV
+records and strict row diagnostics; documented mode, unit, catchment, capacity,
+provenance and zero-supply policies in DESIGN.md. No service input remains opt-in.
+Verified: CSV/string-ID/zero-capacity and JSON smoke checks; 29 existing CLI/input
+regressions passed. CN-I01 complete.
+
+Next: CN-T01, independent contract/configuration and actual-CLI tests.

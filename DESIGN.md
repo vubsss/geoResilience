@@ -63,7 +63,50 @@ Write exactly `network.gpkg`, `summary.json`, `attack_curve.csv`, `report.txt` a
 
 The manifest records checksums of every consumed file, resolved CLI values/defaults, units, software versions, seed, cleaning, graph directedness, boundary method/bounds, probability/speed assumptions and candidate counts. Reproduction requires identical consumed inputs and recorded options/software. Verify hashes and template fingerprints rather than inferring compatibility from filenames.
 
-Public metrics are limited to the retained measures above. Supporting IDs, population counts, probabilities, coverage and provenance are data fields.
+Public metrics without service input are limited to the retained measures above. Supporting IDs, population counts, probabilities, coverage and provenance are data fields.
+
+## Optional critical-service contract
+
+An explicit `--facilities PATH` enables a third service view. No facility file is
+discovered implicitly. `--service-mode weights-only` is the default; `2sfca`
+requires explicit positive `--service-catchment-minutes TYPE=MINUTES` for each
+category present in the CSV, independently of its importance. Internal time units
+are seconds. Importance defaults to one for each type, is finite/nonnegative,
+and at least one type must have positive importance. The separate inclusive
+`--facility-snap-max-m` defaults to 500 metres. Per-type expected units may be
+declared with `--service-unit TYPE=UNIT`. These settings round-trip in RunConfig.
+
+CSV location columns are `facility_id,service_type,longitude,latitude`. IDs are
+unique nonblank strings (leading zeros preserved), types are `school`/`hospital`,
+and coordinates are finite WGS84 lon/lat. Optional descriptive columns are
+`name,capacity_year,notes`. In 2SFCA mode every row must also provide finite
+nonnegative `capacity`, nonblank `capacity_unit` and `capacity_source`, including
+known zero supply. Suggested units are `student_seats` and `staffed_beds`; users
+may explicitly supply other units, consistent within each category. Mixed units
+within a type, duplicate/blank headers and IDs, malformed rows and invalid
+numbers fail with row diagnostics. Weights-only allows unknown capacity as null;
+it never substitutes zero or invents capacity. Known numeric capacity is always
+validated and incompatible declared units always fail.
+
+Count importance is `w_i=sum_c alpha_c*n_i,c`, independent of capacity. Known
+zero-capacity institutions still count toward importance. Service destination
+metrics use fixed original `P_i*w_j`, including co-location; zero original mass
+is unavailable. Seats and beds are never added. Demand for both categories is
+allocated total population; school demand is an all-resident proxy. Retained
+network/crop boundaries do not correct missing neighbouring demand or supply.
+Attachment occurs after cleaning with stable node-ID ties, retaining every
+facility and its provenance; out-of-range points fail rather than disappear.
+
+Standard 2SFCA uses directed resident-to-facility static-time catchments,
+inclusive thresholds and no decay: `D_j=sum_i P_i*1[t_ij<=T_c]`, `R_j=S_j/D_j`,
+`A_i,c=sum_j R_j*1[t_ij<=T_c]`. Facilities with zero demand have null ratios and
+contribute zero, with their supply reported separately. Absent types, zero total
+population and missing time costs are unavailable with reasons. Supplied known
+zero supply yields zero access for positive population. Raw indices are capacity
+per resident (also displayed per 1,000); they are neither clipped nor combined
+across units. Custom dynamic time providers are unsupported for enabled 2SFCA.
+The method extends Luo and Wang (2003), equations (3)/(4), to supplied school and
+hospital capacity; full scenario 2SFCA and age-specific demand are deferred.
 
 ## Verification
 
