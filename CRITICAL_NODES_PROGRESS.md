@@ -17,4 +17,9 @@ regressions passed. CN-I01 complete.
 Complete: 72 focused input/CLI tests passed, including no-service regressions,
 invalid headers/IDs/numbers, units, provenance, catchments and real CLI errors.
 
-Next: CN-I02, deterministic retained-node facility preparation.
+
+## CN-I02
+
+Complete: Canonical records attach with projected metre coordinates, inclusive snap limits and stable node-ID ties; distinct facilities and per-type coverage/provenance retained. Smoke checks passed for co-location, zero snap limit, independent totals and graph non-mutation.
+
+Next: CN-T02.
