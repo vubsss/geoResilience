@@ -126,3 +126,119 @@ def test_weights_only_still_rejects_invalid_supplied_capacity(tmp_path):
     path = facility_csv(tmp_path, [school(capacity='nan')])
     with pytest.raises(ValueError, match='capacity'):
         load_facility_records(ServicesConfig(facilities_csv=path))
+
+
+def metric_graph(nodes):
+    import networkx as nx
+    graph = nx.MultiDiGraph(crs='EPSG:3857')
+    for node, x, y in nodes:
+        graph.add_node(node, x=x, y=y)
+    return graph
+
+
+def test_projected_snapping_inclusive_limit_and_just_outside(tmp_path):
+    from pyproj import Transformer
+    from georesilience.services import prepare_services
+    x, y = Transformer.from_crs(4326, 3857, always_xy=True).transform(78.47, 17.4)
+    graph = metric_graph([(7, x + 20, y)])
+    path = facility_csv(tmp_path)
+    result = prepare_services(graph, ServicesConfig(facilities_csv=path, snap_max_m=20))
+    f = result.facilities[0]
+    assert f.node_id == 7 and f.node_index == 0
+    assert f.snap_m == 20 and f.x == x and f.y == y
+    assert f.record.longitude == 78.47 and f.record.latitude == 17.4
+    with pytest.raises(ValueError, match="'001'.*exceeds inclusive"):
+        prepare_services(graph, ServicesConfig(facilities_csv=path, snap_max_m=19.999999))
+
+
+def test_ties_zero_limit_and_node_order_are_deterministic(tmp_path):
+    from georesilience.services import prepare_services
+    path = facility_csv(tmp_path, [school(longitude='0', latitude='0')])
+    for nodes in ([(10, -1, 0), (2, 1, 0)], [(2, 1, 0), (10, -1, 0)]):
+        result = prepare_services(metric_graph(nodes), ServicesConfig(facilities_csv=path, snap_max_m=1))
+        assert result.facilities[0].node_id == 2
+    graph = metric_graph([(10, 0, 0), (2, 0, 0), ('01', 0, 0), ('1', 0, 0)])
+    result = prepare_services(graph, ServicesConfig(facilities_csv=path, snap_max_m=0))
+    assert result.facilities[0].node_id == '01'
+    assert result.facilities[0].snap_m == 0
+
+
+def test_colocated_categories_keep_identity_totals_and_provenance(tmp_path):
+    import copy
+    import numpy as np
+    from georesilience.services import prepare_services
+    graph = metric_graph([(1, 0, 0), (2, 100, 0)])
+    before = copy.deepcopy(graph)
+    rows = [school(facility_id='002', longitude='0', latitude='0', capacity='70'),
+        school(facility_id='001', longitude='0', latitude='0', capacity='50'),
+        school(facility_id='003', longitude='0', latitude='0', service_type='hospital',
+            capacity='5', capacity_unit='beds', capacity_source='hospital record')]
+    path = facility_csv(tmp_path, rows)
+    first = prepare_services(graph, sfca_config(path, snap_max_m=0))
+    assert [f.record.facility_id for f in first.facilities] == ['001', '002', '003']
+    assert [f.node_id for f in first.facilities] == [1, 1, 1]
+    np.testing.assert_array_equal(first.counts['school'], [2, 0])
+    np.testing.assert_array_equal(first.capacities['school'], [120, 0])
+    np.testing.assert_array_equal(first.capacities['hospital'], [5, 0])
+    assert first.summary['categories']['hospital']['capacity_sources'] == ['hospital record']
+    assert first.summary['categories']['school']['known_capacity_total'] == 120
+    assert first.summary['attached_count'] == 3 and first.summary['excluded_count'] == 0
+    path = facility_csv(tmp_path, rows[::-1])
+    second = prepare_services(graph, sfca_config(path, snap_max_m=0))
+    assert [f.public() for f in first.facilities] == [f.public() for f in second.facilities]
+    assert first.summary == second.summary
+    assert dict(graph.nodes(data=True)) == dict(before.nodes(data=True))
+    assert list(graph.edges(data=True)) == list(before.edges(data=True))
+
+
+def test_unknown_capacity_not_zero_and_zero_supply_is_counted(tmp_path):
+    import numpy as np
+    from georesilience.services import prepare_services
+    path = facility_csv(tmp_path, [school(longitude='0', latitude='0', capacity=''),
+        school(facility_id='002', longitude='0', latitude='0', capacity='0')])
+    result = prepare_services(metric_graph([(1, 0, 0)]), ServicesConfig(facilities_csv=path))
+    assert np.isnan(result.capacities['school'][0])
+    category = result.summary['categories']['school']
+    assert category['capacity_total'] is None
+    assert category['known_capacity_total'] == 0
+    assert category['unknown_capacity_count'] == category['zero_capacity_count'] == 1
+
+
+@pytest.mark.parametrize('kind', ['geographic', 'feet', 'missing_crs', 'missing_xy', 'nan_xy', 'empty'])
+def test_invalid_graph_crs_and_coordinates(tmp_path, kind):
+    from georesilience.services import prepare_services
+    graph = metric_graph([(1, 0, 0)])
+    if kind == 'geographic':
+        graph.graph['crs'] = 'EPSG:4326'
+    elif kind == 'feet':
+        graph.graph['crs'] = 'EPSG:2263'
+    elif kind == 'missing_crs':
+        del graph.graph['crs']
+    elif kind == 'missing_xy':
+        del graph.nodes[1]['x']
+    elif kind == 'nan_xy':
+        graph.nodes[1]['y'] = float('nan')
+    else:
+        graph.clear()
+        graph.graph['crs'] = 'EPSG:3857'
+    path = facility_csv(tmp_path)
+    with pytest.raises(ValueError, match='requires'):
+        prepare_services(graph, ServicesConfig(facilities_csv=path))
+
+
+def test_attachment_uses_cleaned_retained_consolidated_nodes(tmp_path):
+    from pyproj import Transformer
+    from georesilience.inputs import directory_config
+    from georesilience.network import load_and_clean
+    from georesilience.services import prepare_services
+    from tests.test_directory_cli import make_input
+    directory, _, _, _ = make_input(tmp_path)
+    config = directory_config(directory, consolidate=True, consolidation_m=15)
+    graph, _, _ = load_and_clean(config)
+    node = next(iter(graph))
+    lon, lat = Transformer.from_crs(graph.graph['crs'], 4326, always_xy=True).transform(
+        graph.nodes[node]['x'], graph.nodes[node]['y'])
+    path = facility_csv(tmp_path, [school(longitude=str(lon), latitude=str(lat))])
+    result = prepare_services(graph, ServicesConfig(facilities_csv=path, snap_max_m=.001))
+    assert result.facilities[0].node_id == node
+    assert result.node_ids == tuple(graph)

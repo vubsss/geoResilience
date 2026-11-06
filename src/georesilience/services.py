@@ -5,6 +5,7 @@ import math
 
 import numpy as np
 from pyproj import CRS, Transformer
+from pyproj.exceptions import CRSError
 from scipy.spatial import cKDTree
 
 from .od import node_id_key
@@ -45,7 +46,7 @@ def prepare_services(graph, config):
     records = load_facility_records(config)
     try:
         crs = CRS.from_user_input(graph.graph.get('crs'))
-    except (ValueError, TypeError) as exc:
+    except (ValueError, TypeError, CRSError) as exc:
         raise ValueError('facility snapping requires a projected graph CRS with metre units') from exc
     if not crs.is_projected or len(crs.axis_info) < 2 or any(
             not math.isclose(axis.unit_conversion_factor, 1) for axis in crs.axis_info[:2]):

@@ -22,4 +22,9 @@ invalid headers/IDs/numbers, units, provenance, catchments and real CLI errors.
 
 Complete: Canonical records attach with projected metre coordinates, inclusive snap limits and stable node-ID ties; distinct facilities and per-type coverage/provenance retained. Smoke checks passed for co-location, zero snap limit, independent totals and graph non-mutation.
 
-Next: CN-T02.
+
+## CN-T02
+
+Complete: 70 focused facility/cleaning tests passed. Exact limits, projections, coincident/equidistant IDs, co-location, totals, shuffled rows, unknown capacity and consolidated graph attachment checked. Fixed missing-CRS diagnostics exposed by the tests.
+
+Next: CN-I03.
