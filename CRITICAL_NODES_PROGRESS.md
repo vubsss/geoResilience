@@ -42,4 +42,9 @@ Complete: 51 service-weight and existing baseline/population tests passed. Expli
 
 Complete: Extracted reusable seconds topology with link closures, retained node isolation, transpose queries and budgeted static reductions. Missing times remain unavailable; dynamic custom providers explicitly rejected for 2SFCA. Existing time/reliability regression suite passed.
 
-Next: CN-T04.
+
+## CN-T04
+
+Complete: 72 shared-time and existing provider/reliability tests passed. NetworkX oracle verifies direction, transpose, fastest parallel arcs, reciprocal-link closure, isolated nodes, inclusive seconds cutoff, serial/parallel small blocks, invalid costs, unavailable speeds and dynamic rejection.
+
+Next: CN-I05.
