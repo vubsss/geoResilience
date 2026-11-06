@@ -27,4 +27,9 @@ Complete: Canonical records attach with projected metre coordinates, inclusive s
 
 Complete: 70 focused facility/cleaning tests passed. Exact limits, projections, coincident/equidistant IDs, co-location, totals, shuffled rows, unknown capacity and consolidated graph attachment checked. Fixed missing-CRS diagnostics exposed by the tests.
 
-Next: CN-I03.
+
+## CN-I03
+
+Complete: Count importance and category node fields implemented independently of capacity. Directed P_i*w_j reachability and length Hansen include co-location and preserve original closure denominators; independent numeric smoke checks passed.
+
+Next: CN-T03.

@@ -115,3 +115,27 @@ def prepare_services(graph, config):
         {'input_count': len(records), 'attached_count': len(facilities), 'excluded_count': 0,
          'snap_max_m': config.snap_max_m, 'maximum_snap_m': max((f.snap_m for f in facilities), default=0),
          'graph_crs': crs.to_string(), 'categories': categories})
+
+
+def service_node_weights(prepared, config):
+    """Institution count importance, independent of capacity units or missingness."""
+    with np.errstate(over='ignore'):
+        weights = sum(getattr(config, category).importance * prepared.counts[category].astype(float)
+                      for category in SERVICE_TYPES)
+    if not np.isfinite(weights).all() or not math.isfinite(float(weights.sum())):
+        raise ValueError('total service importance must be finite')
+    return weights
+
+
+def service_node_fields(prepared, weights):
+    """Public category fields; unknown aggregate capacity is null, never zero."""
+    result = {}
+    for i, node in enumerate(prepared.node_ids):
+        row = {'service_weight': float(weights[i])}
+        for category in SERVICE_TYPES:
+            value = prepared.capacities[category][i]
+            row.update({f'{category}_count': int(prepared.counts[category][i]),
+                f'{category}_capacity': float(value) if np.isfinite(value) else None,
+                f'{category}_unknown_capacity_count': int(prepared.unknown_counts[category][i])})
+        result[node] = row
+    return result
