@@ -12,4 +12,9 @@ provenance and zero-supply policies in DESIGN.md. No service input remains opt-i
 Verified: CSV/string-ID/zero-capacity and JSON smoke checks; 29 existing CLI/input
 regressions passed. CN-I01 complete.
 
-Next: CN-T01, independent contract/configuration and actual-CLI tests.
+## CN-T01 — Contract tests
+
+Complete: 72 focused input/CLI tests passed, including no-service regressions,
+invalid headers/IDs/numbers, units, provenance, catchments and real CLI errors.
+
+Next: CN-I02, deterministic retained-node facility preparation.
