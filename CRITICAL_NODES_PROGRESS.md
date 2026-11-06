@@ -57,4 +57,9 @@ Complete: Implemented standard per-category 2SFCA in two bounded transposed pass
 
 Complete: 25 2SFCA/routing tests passed. Independent NetworkX oracle verifies paper ratios 1/8, 1/4 and overlap 3/8; capacity/population scaling, conservation, independent types, co-location, raw values above one, zero demand/supply, unavailable states and bounded worker consistency.
 
-Next: CN-I06.
+
+## CN-I06
+
+Complete: Expanded paired candidate rules for positive-weight service nodes and incident links. Closure recomputation publishes category shortfall, newly unserved share, damaged means, signed raw mean changes, combined losses, evaluated flags/reasons and deterministic rankings. Existing closure suites plus smoke checks passed.
+
+Next: CN-T06.
