@@ -52,4 +52,9 @@ Complete: 72 shared-time and existing provider/reliability tests passed. Network
 
 Complete: Implemented standard per-category 2SFCA in two bounded transposed passes with separate facility ratios, raw/per-1000 summaries and explicit absent, zero-population, zero-demand, zero-supply and missing-time policies. Numeric co-location/closure smoke checks passed.
 
-Next: CN-T05.
+
+## CN-T05
+
+Complete: 25 2SFCA/routing tests passed. Independent NetworkX oracle verifies paper ratios 1/8, 1/4 and overlap 3/8; capacity/population scaling, conservation, independent types, co-location, raw values above one, zero demand/supply, unavailable states and bounded worker consistency.
+
+Next: CN-I06.
