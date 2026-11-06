@@ -25,7 +25,7 @@ def _assignments(values, label):
 
 
 def _network_flags(parser):
-    parser.add_argument("input_dir", type=Path, help="directory with exactly one road network and one count GeoTIFF")
+    parser.add_argument("input_dir", type=Path, help="directory with one road network and one count GeoTIFF (raster optional with --facilities)")
     parser.add_argument("--out", required=True, type=Path)
     parser.add_argument("--overwrite", action="store_true", help="replace known generated files, preserving unknown files")
     parser.add_argument("--boundary", type=Path)

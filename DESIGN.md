@@ -4,7 +4,7 @@ GeoResilience is a local road-resilience CLI. Its inputs are one supported road 
 
 ## Inputs and preparation
 
-`georesilience run INPUT_DIR --out OUTPUT_DIR` discovers exactly one `.osm`, `.osm.xml` or `.graphml` and exactly one `.tif` or `.tiff`. Ambiguous/missing inputs fail with candidate paths. OSM PBF is unsupported. XML filtering defaults to `drive`; GraphML is used as supplied and the manifest must distinguish a requested setting from an applied filter.
+`georesilience run INPUT_DIR --out OUTPUT_DIR` discovers exactly one `.osm`, `.osm.xml` or `.graphml` and exactly one `.tif` or `.tiff` (optional only with the service-enabled uniform-demand fallback below). Ambiguous/missing inputs fail with candidate paths. OSM PBF is unsupported. XML filtering defaults to `drive`; GraphML is used as supplied and the manifest must distinguish a requested setting from an applied filter.
 
 Cleaning simplifies road geometry, projects to metre coordinates, optionally consolidates intersections (15 m default), and retains the largest directed strongly connected component (ties use canonical node IDs). Record before/after counts and length. Use the retained graph for every metric and for population allocation.
 

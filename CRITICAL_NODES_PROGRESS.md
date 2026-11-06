@@ -85,6 +85,11 @@ Complete: Integrated opt-in service JSON v2, GIS facilities/node/link fields, re
 
 ## CN-T08
 
-Complete: 59 focused pipeline/legacy tests passed (19 service cases). XML/GraphML population and uniform fallback, additive normalized importance and attack AUC, GIS/report/figures, replay, changed CSV detection, zero/missing data, safe overwrite, input collisions and in-flight changes verified.
+Complete: 59 focused pipeline/legacy tests passed (18 service cases). XML/GraphML population and uniform fallback, additive normalized importance and attack AUC, GIS/report/figures, replay, changed CSV detection, zero/missing data, safe overwrite, input collisions and in-flight changes verified.
 
-Next: CN-I09.
+
+## CN-I09
+
+Complete: Documented all service settings, formula/units/output fields, population-plus-service importance, uniform fallback, 2SFCA/criticality/scenario distinctions, provenance and real-study assumptions. Added validated synthetic capacity-aware and location-only CSV examples plus fixture instructions. CLI help and example input contracts checked.
+
+Next: CN-T09.
