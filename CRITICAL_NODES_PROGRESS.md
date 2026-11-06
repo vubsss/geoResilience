@@ -47,4 +47,9 @@ Complete: Extracted reusable seconds topology with link closures, retained node 
 
 Complete: 72 shared-time and existing provider/reliability tests passed. NetworkX oracle verifies direction, transpose, fastest parallel arcs, reciprocal-link closure, isolated nodes, inclusive seconds cutoff, serial/parallel small blocks, invalid costs, unavailable speeds and dynamic rejection.
 
-Next: CN-I05.
+
+## CN-I05
+
+Complete: Implemented standard per-category 2SFCA in two bounded transposed passes with separate facility ratios, raw/per-1000 summaries and explicit absent, zero-population, zero-demand, zero-supply and missing-time policies. Numeric co-location/closure smoke checks passed.
+
+Next: CN-T05.
