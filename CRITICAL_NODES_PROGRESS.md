@@ -82,4 +82,9 @@ Complete: 56 service/event/attack tests passed. Independent seeded-event oracle 
 
 Complete: Integrated opt-in service JSON v2, GIS facilities/node/link fields, reports/rankings, service figures, consumed hashes, replay and staged overwrite. User refinement adds normalized population share to normalized service points with configurable coefficient and uniform demand when raster absent. 97 existing/input/service checks and population/uniform end-to-end replay smoke checks passed.
 
-Next: CN-T08.
+
+## CN-T08
+
+Complete: 59 focused pipeline/legacy tests passed (19 service cases). XML/GraphML population and uniform fallback, additive normalized importance and attack AUC, GIS/report/figures, replay, changed CSV detection, zero/missing data, safe overwrite, input collisions and in-flight changes verified.
+
+Next: CN-I09.
