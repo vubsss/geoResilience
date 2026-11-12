@@ -55,6 +55,22 @@ def main(argv=None):
     analysis.add_argument("--time-model", choices=("free-flow", "edge-attribute"), default="free-flow")
     analysis.add_argument("--time-attribute", default="travel_time_s", help="edge-attribute cost in seconds")
     analysis.add_argument("--speed", action="append", metavar="HIGHWAY=KPH")
+    analysis.add_argument("--simulate-traffic", action="store_true", help="run Tier 4 assignment using supplied OD demand or synthetic gravity demand")
+    analysis.add_argument("--traffic-od", type=Path, help="CSV with origin,destination,demand_pcu_h node IDs")
+    analysis.add_argument("--traffic-zones", type=Path, help="CSV with node,mass for synthetic gravity demand")
+    analysis.add_argument("--traffic-demand-pcu-h", type=float)
+    analysis.add_argument("--traffic-gravity-lambda-per-min", type=float)
+    analysis.add_argument("--traffic-capacity-pcu-h", type=float, help="uniform directed-edge capacity assumption")
+    analysis.add_argument("--traffic-capacities", type=Path, help="CSV with u,v,key,capacity_pcu_h")
+    analysis.add_argument("--traffic-edge-times", type=Path, help="CSV with u,v,key,travel_time_s; bypasses assignment")
+    analysis.add_argument("--traffic-period", default="illustrative_one_hour")
+    analysis.add_argument("--traffic-duration-h", type=float, default=1)
+    analysis.add_argument("--traffic-vdf", choices=("bpr", "conical"), default="bpr")
+    analysis.add_argument("--traffic-alpha", type=float, default=.15)
+    analysis.add_argument("--traffic-beta", type=float, default=4)
+    analysis.add_argument("--traffic-relative-gap", type=float, default=1e-4)
+    analysis.add_argument("--traffic-max-iterations", type=int, default=200)
+    analysis.add_argument("--traffic-closure-top-n", type=int, default=0)
     analysis.add_argument("--criticality-coverage", choices=("screened", "all"), default="screened")
     analysis.add_argument("--attack-fraction", type=float, default=.20)
     analysis.add_argument("--attack-steps", type=int, default=50)
@@ -102,6 +118,17 @@ def main(argv=None):
                 travel_time={"samples": args.travel_time_samples, "tau": args.time_threshold,
                     "time_model": args.time_model.replace("-", "_"), "time_attribute": args.time_attribute,
                     "highway_speeds_kph": _assignments(args.speed, "--speed") if args.speed else None},
+                traffic={"enabled": args.simulate_traffic, "source": "edge_times_csv" if args.traffic_edge_times else "assignment",
+                    "period": args.traffic_period, "duration_h": args.traffic_duration_h,
+                    "demand_source": "gravity" if args.traffic_zones else "od_csv",
+                    "od_csv": args.traffic_od, "zone_mass_csv": args.traffic_zones,
+                    "total_demand_pcu_h": args.traffic_demand_pcu_h,
+                    "gravity_lambda_per_min": args.traffic_gravity_lambda_per_min,
+                    "edge_times_csv": args.traffic_edge_times, "capacity_csv": args.traffic_capacities,
+                    "capacity_pcu_h": args.traffic_capacity_pcu_h, "vdf": args.traffic_vdf,
+                    "alpha": args.traffic_alpha, "beta": args.traffic_beta,
+                    "relative_gap": args.traffic_relative_gap, "max_iterations": args.traffic_max_iterations,
+                    "closure_top_n": args.traffic_closure_top_n},
                 accessibility={"half_distance_km": args.half_distance_km})
             run(RunConfig.model_validate(values), overwrite=args.overwrite)
     except (ValueError, OSError, RuntimeError, ParseError) as exc:

@@ -36,4 +36,16 @@ def build_report(summary):
                   "  All input hashes, resolved settings, versions and evaluated IDs are in run_manifest.json."])
     if summary.get("reliability_scenarios"):
         lines.append("  Additional p0 scenarios: " + ", ".join(summary["reliability_scenarios"]))
+    if summary.get("traffic"):
+        traffic = summary["traffic"]
+        lines.extend(["", "Traffic assignment",
+            f"  Status: {traffic['status']}; source: {traffic['source']}; period: {traffic['period']}",
+            f"  Directed arcs: {traffic['arc_count']}"])
+        if traffic["source"] == "assignment":
+            lines.extend([f"  Demand: {traffic['demand_pcu_h']:.6g} PCU/h",
+                f"  VDF: {traffic['vdf']} (alpha={traffic['alpha']}, beta={traffic['beta']})",
+                f"  Relative gap: {traffic['relative_gap']:.6g} after {traffic['iterations']} iterations",
+                f"  Total system travel time: {traffic['tstt_pcu_hours']:.6g} PCU-hours",
+                f"  Mean OD time/delay: {traffic['mean_od_time_s']:.6g} / {traffic['mean_od_delay_s']:.6g} seconds",
+                "  Traffic inputs are simulated/supplied scenario assumptions, not observed counts."])
     return "\n".join(lines) + "\n"

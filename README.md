@@ -47,6 +47,38 @@ No YAML configuration is needed. Run `georesilience run --help` for all options.
 
 Existing nonempty output requires `--overwrite`. Overwrite removes recognised generated files and preserves unknown user files. Input and CSV validation occurs before results are replaced.
 
+## Tier 4 traffic scenarios
+
+Traffic assignment is optional. It uses directed OD demand or a synthetic doubly constrained
+gravity matrix, a capacity assumption, and the BPR or conical volume-delay function. The assigned
+congested seconds become the baseline travel-time cost used by reliability. Demand and capacity
+inputs are scenario assumptions unless calibrated from local observations.
+
+For synthetic gravity demand, provide zone nodes from the cleaned road graph in a CSV with
+`node,mass` columns, then run:
+
+```sh
+georesilience run input/hyderabad --out results/hyderabad-traffic \
+  --simulate-traffic --traffic-zones data/zone-masses.csv \
+  --traffic-demand-pcu-h 100000 --traffic-gravity-lambda-per-min 0.08 \
+  --traffic-capacity-pcu-h 1000 --traffic-period weekday_am_peak
+```
+
+The example values are illustrative. Add `--simulate-traffic` for every traffic mode.
+`--traffic-od FILE` accepts columns
+`origin,destination,demand_pcu_h` using cleaned graph node IDs. Replace the uniform capacity with
+`--traffic-capacities FILE` (`u,v,key,capacity_pcu_h`) for directed edge-specific capacities, or
+use `--traffic-edge-times FILE` (`u,v,key,travel_time_s`) to supply times without assignment.
+Use repeatable `--speed HIGHWAY=KPH` options to resolve free-flow speeds when OSM has no usable
+`maxspeed` tags. `--traffic-closure-top-n N` reassigns traffic after closing the N highest-flow
+physical links.
+
+Runs with assignment write `traffic_arcs.csv` and `traffic_od.csv`; closure scenarios also write
+`traffic_closures.csv`. All runs add a `traffic_arcs` layer to `network.gpkg`, include traffic
+assumptions in `summary.json`, `run_manifest.json` and `report.txt`, and retain the consumed CSV
+hashes in the manifest. The model is static for one declared period: Monte Carlo road failures
+reuse the assigned times, while the explicit top-link closure scenarios rerun assignment.
+
 ## Failure probabilities
 
 Generate a template using the same network and cleaning settings as the analysis:

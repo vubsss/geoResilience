@@ -8,7 +8,7 @@ from pathlib import Path
 from tempfile import TemporaryDirectory
 
 import geopandas as gpd
-from shapely.geometry import Point
+from shapely.geometry import LineString, Point
 
 from . import __version__
 from .config import RunConfig
@@ -23,8 +23,12 @@ from .reliability import compute_reliability, write_od_reliability
 from .reporting import build_report
 from .robustness import compute_targeted_attack, write_curve
 from .shortest_paths import resolve_resources, GIB
+from .time_models import FreeFlowTimeModel, PreparedTimeModel
+from .traffic import (evaluate_closures, prepare_traffic, write_traffic_closures_csv,
+                      write_traffic_csv, write_traffic_od_csv)
 
-CORE_FILES = ("network.gpkg", "summary.json", "attack_curve.csv", "report.txt", "run_manifest.json", "od_reliability.csv")
+CORE_FILES = ("network.gpkg", "summary.json", "attack_curve.csv", "report.txt", "run_manifest.json",
+    "od_reliability.csv", "traffic_arcs.csv", "traffic_od.csv", "traffic_closures.csv")
 # Recognised outputs of prior releases, used only for safe overwrite migration.
 LEGACY_FILES = ("run_config.yaml", "robustness_curves.csv", "zones.gpkg")
 LEGACY_FIGURES = ("degree_hist.png", "closeness_ccdf.png", "straightness_ccdf.png", "betweenness_ccdf.png",
@@ -48,7 +52,11 @@ def _versions():
 def _consumed(config):
     files = [("roads", config.input.path), ("population", config.population.worldpop),
         ("boundary", config.input.boundary), ("failure_probabilities", config.reliability.p_fail_csv),
-        ("od_pairs", config.reliability.od_pairs_csv)]
+        ("od_pairs", config.reliability.od_pairs_csv),
+        ("traffic_od", config.traffic.od_csv if config.traffic.enabled else None),
+        ("traffic_zone_masses", config.traffic.zone_mass_csv if config.traffic.enabled else None),
+        ("traffic_edge_times", config.traffic.edge_times_csv if config.traffic.enabled else None),
+        ("traffic_capacities", config.traffic.capacity_csv if config.traffic.enabled else None)]
     if config.population.worldpop is None:
         raise ValueError("one local WorldPop count GeoTIFF is required")
     # GDAL may consult local georeferencing sidecars; include them in replay checks.
@@ -84,6 +92,19 @@ def _write_json(path, values):
     path.write_text(json.dumps(values, indent=2, allow_nan=False, sort_keys=True) + "\n", encoding="utf-8")
 
 
+class _TrafficTimeModel:
+    def __init__(self, traffic):
+        self.traffic = traffic
+
+    def prepare(self, graph, config):
+        return PreparedTimeModel(self.traffic.edge_seconds, {
+            "status": "computed" if self.traffic.summary["status"] in {"computed", "converged"} else "non_converged",
+            "time_model": "traffic_" + self.traffic.summary["source"], "time_units": "seconds",
+            "time_function": "directed traffic scenario travel time",
+            "assumptions": f"{self.traffic.summary['provenance']} traffic; fixed edge times during event simulations",
+            "maxspeed_coverage": None})
+
+
 def run(config: RunConfig, out_override=None, overwrite=False, *, time_model=None):
     output = Path(out_override or config.output.dir).expanduser().resolve()
     input_dir = (config.input.directory or config.input.path.parent).expanduser().resolve()
@@ -99,6 +120,22 @@ def run(config: RunConfig, out_override=None, overwrite=False, *, time_model=Non
     links = _link_rows(graph)
     failures = compute_failure_probabilities(graph, links, config.reliability)
     od = load_od_pairs(graph, config.reliability.od_pairs_csv)
+    traffic = None
+    reliability_time_model = time_model
+    if config.traffic.enabled:
+        if time_model is not None or config.travel_time.time_model != "free_flow":
+            raise ValueError("traffic supplies travel-time costs; remove the custom or edge-attribute travel-time model")
+        free_flow = None
+        if config.traffic.source == "assignment":
+            free_flow = FreeFlowTimeModel().prepare(graph, config.travel_time)
+            if free_flow.summary["status"] != "computed":
+                raise ValueError("traffic assignment requires resolvable edge speeds; use --speed or supply maxspeed tags")
+        traffic = prepare_traffic(graph, config.traffic,
+            free_flow.edge_seconds if free_flow is not None else None)
+        if config.traffic.source == "assignment" and config.traffic.closure_top_n:
+            evaluate_closures(graph, links, traffic, free_flow.edge_seconds, config.traffic)
+            traffic.summary["closures"] = traffic.closure_rows
+        reliability_time_model = _TrafficTimeModel(traffic)
     settings = {"half_distance_km": config.accessibility.half_distance_km,
                 "cutoff_factor": config.accessibility.cutoff_factor, "n_jobs": jobs, "budget_bytes": budget}
     local = compute_local_metrics(graph, population.weights, coverage=config.criticality.coverage,
@@ -111,7 +148,7 @@ def run(config: RunConfig, out_override=None, overwrite=False, *, time_model=Non
         p0=config.reliability.p0, p0_sweep=config.reliability.p0_sweep,
         connectivity_samples=config.reliability.samples, travel_time_samples=config.travel_time.samples,
         time_threshold=config.travel_time.tau, seed=config.analysis.seed, n_jobs=jobs, budget_bytes=budget,
-        time_config=config.travel_time, time_model=time_model, od_inputs=od)
+        time_config=config.travel_time, time_model=reliability_time_model, od_inputs=od)
     baseline = local.baseline
     definitions = {
         "routing": "Betweenness: length-weighted undirected minimum-link graph; routing/removals: directed retained network.",
@@ -132,7 +169,8 @@ def run(config: RunConfig, out_override=None, overwrite=False, *, time_model=Non
         "network": {**cleaning["final"], "network_type_applied": input_meta["network_type_applied"]},
         "population": population.summary, "boundary": boundary_meta, "coverage": local.coverage,
         "probabilities": failures.summary, "time_model": reliability.summary["time_model"],
-        "attack": attack.summary, "definitions": definitions, "od_warnings": od.warnings}
+        "attack": attack.summary, "definitions": definitions, "od_warnings": od.warnings,
+        **({"traffic": traffic.summary} if traffic is not None else {})}
     if config.reliability.p0_sweep:
         summary["reliability_scenarios"] = {key: value for key, value in reliability.summary["scenarios"].items() if key != "primary"}
     resolved = config.model_dump(mode="json")
@@ -143,6 +181,10 @@ def run(config: RunConfig, out_override=None, overwrite=False, *, time_model=Non
     for section, field in (("input", "boundary"), ("reliability", "p_fail_csv"), ("reliability", "od_pairs_csv")):
         if resolved[section][field] is not None:
             resolved[section][field] = str(Path(resolved[section][field]).expanduser().resolve())
+    for field in ("od_csv", "zone_mass_csv", "edge_times_csv", "capacity_csv"):
+        value = resolved["traffic"].get(field)
+        if value is not None:
+            resolved["traffic"][field] = str(Path(value).expanduser().resolve())
     resolved["analysis"].update(n_jobs=jobs, max_memory_gb=budget / GIB)
     if time_model is not None:
         resolved["travel_time"]["time_model"] = "custom"
@@ -151,6 +193,7 @@ def run(config: RunConfig, out_override=None, overwrite=False, *, time_model=Non
         "input_cleaning_fingerprint": graph.graph["input_cleaning_fingerprint"], "cleaning": cleaning,
         "boundary": boundary_meta, "coverage": local.coverage, "population": population.provenance,
         "probabilities": failures.summary, "time_model": reliability.summary["time_model"],
+        **({"traffic": traffic.summary} if traffic is not None else {}),
         "sampling": reliability.computation, "attack_removal_order": attack.removal_order,
         "pair_universe": {"nodes": baseline.universe.n, "ordered_node_pairs": baseline.universe.denominator,
             "normalized_population_pair_mass": baseline.universe.denominator_pop,
@@ -182,6 +225,26 @@ def run(config: RunConfig, out_override=None, overwrite=False, *, time_model=Non
         stage = Path(directory)
         nodes.to_file(stage / "network.gpkg", layer="nodes", driver="GPKG", engine="pyogrio")
         edges.to_file(stage / "network.gpkg", layer="edges", driver="GPKG", engine="pyogrio")
+        if traffic is not None:
+            write_traffic_csv(traffic, stage / "traffic_arcs.csv")
+            if traffic.od_rows:
+                write_traffic_od_csv(traffic, stage / "traffic_od.csv")
+            if traffic.closure_rows is not None:
+                write_traffic_closures_csv(traffic, stage / "traffic_closures.csv")
+            edge_by_label = {(str(u), str(v), str(key)): (u, v, key)
+                for u, v, key in traffic.edge_seconds}
+            link_by_edge = {edge: row["link_uid"] for row in links for edge in row["_edges"]}
+            arc_records = []
+            for row in traffic.rows:
+                edge = edge_by_label[(row["u"], row["v"], row["key"])]
+                u, v, key = edge
+                geometry = graph[u][v][key].get("geometry")
+                if geometry is None:
+                    geometry = LineString([(graph.nodes[u]["x"], graph.nodes[u]["y"]),
+                                           (graph.nodes[v]["x"], graph.nodes[v]["y"])])
+                arc_records.append({**row, "link_uid": link_by_edge[edge], "geometry": geometry})
+            gpd.GeoDataFrame(arc_records, geometry="geometry", crs=graph.graph["crs"]).to_file(
+                stage / "network.gpkg", layer="traffic_arcs", driver="GPKG", engine="pyogrio", mode="a")
         _write_json(stage / "summary.json", summary)
         _write_json(stage / "run_manifest.json", manifest)
         (stage / "report.txt").write_text(build_report(summary), encoding="utf-8")

@@ -83,6 +83,56 @@ class TravelTimeConfig(StrictModel):
         return self
 
 
+class TrafficConfig(StrictModel):
+    enabled: bool = False
+    source: Literal["assignment", "edge_times_csv"] = "assignment"
+    period: str = "illustrative_one_hour"
+    duration_h: float = Field(default=1.0, gt=0, allow_inf_nan=False)
+    demand_source: Literal["od_csv", "gravity"] = "od_csv"
+    od_csv: Path | None = None
+    zone_mass_csv: Path | None = None
+    total_demand_pcu_h: float | None = Field(default=None, gt=0, allow_inf_nan=False)
+    gravity_lambda_per_min: float | None = Field(default=None, gt=0, allow_inf_nan=False)
+    edge_times_csv: Path | None = None
+    capacity_csv: Path | None = None
+    capacity_pcu_h: float | None = Field(default=None, gt=0, allow_inf_nan=False)
+    vdf: Literal["bpr", "conical"] = "bpr"
+    alpha: float = Field(default=0.15, gt=0, allow_inf_nan=False)
+    beta: float = Field(default=4.0, gt=0, allow_inf_nan=False)
+    relative_gap: float = Field(default=1e-4, gt=0, allow_inf_nan=False)
+    max_iterations: int = Field(default=200, ge=1)
+    closure_top_n: int = Field(default=0, ge=0)
+
+    @model_validator(mode="after")
+    def validate_inputs(self):
+        if not self.enabled:
+            return self
+        if not self.period.strip():
+            raise ValueError("traffic.period must be nonempty")
+        if self.source == "assignment":
+            if self.capacity_csv is None and self.capacity_pcu_h is None:
+                raise ValueError("traffic assignment needs capacity_csv or capacity_pcu_h")
+            if self.demand_source == "od_csv" and self.od_csv is None:
+                raise ValueError("traffic assignment needs od_csv")
+            if self.demand_source == "od_csv" and self.zone_mass_csv is not None:
+                raise ValueError("traffic demand must use either od_csv or zone_mass_csv, not both")
+            if self.demand_source == "gravity" and (self.zone_mass_csv is None or
+                                                    self.total_demand_pcu_h is None or
+                                                    self.gravity_lambda_per_min is None):
+                raise ValueError("traffic gravity demand needs zone_mass_csv, total_demand_pcu_h and gravity_lambda_per_min")
+            if self.demand_source == "gravity" and self.od_csv is not None:
+                raise ValueError("traffic demand must use either od_csv or zone_mass_csv, not both")
+            if self.vdf == "conical" and abs(1 + math.hypot(self.alpha, self.beta) -
+                                              self.alpha - self.beta) > .01:
+                raise ValueError("traffic conical alpha/beta must give approximately free-flow time at zero volume")
+        else:
+            if self.edge_times_csv is None:
+                raise ValueError("traffic.edge_times_csv is required for supplied edge times")
+            if self.closure_top_n:
+                raise ValueError("traffic.closure_top_n requires assignment demand and a VDF")
+        return self
+
+
 class AccessibilityConfig(StrictModel):
     half_distance_km: float = Field(default=2, gt=0, allow_inf_nan=False)
     cutoff_factor: float = Field(default=5, gt=0, allow_inf_nan=False)
@@ -111,6 +161,7 @@ class RunConfig(StrictModel):
     robustness: RobustnessConfig = Field(default_factory=RobustnessConfig)
     reliability: ReliabilityConfig = Field(default_factory=ReliabilityConfig)
     travel_time: TravelTimeConfig = Field(default_factory=TravelTimeConfig)
+    traffic: TrafficConfig = Field(default_factory=TrafficConfig)
     accessibility: AccessibilityConfig = Field(default_factory=AccessibilityConfig)
     population: PopulationConfig = Field(default_factory=PopulationConfig)
     output: OutputConfig = Field(default_factory=OutputConfig)
