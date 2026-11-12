@@ -88,11 +88,16 @@ class TrafficConfig(StrictModel):
     source: Literal["assignment", "edge_times_csv"] = "assignment"
     period: str = "illustrative_one_hour"
     duration_h: float = Field(default=1.0, gt=0, allow_inf_nan=False)
-    demand_source: Literal["od_csv", "gravity"] = "od_csv"
+    demand_source: Literal["od_csv", "gravity", "population"] = "od_csv"
     od_csv: Path | None = None
     zone_mass_csv: Path | None = None
     total_demand_pcu_h: float | None = Field(default=None, gt=0, allow_inf_nan=False)
-    gravity_lambda_per_min: float | None = Field(default=None, gt=0, allow_inf_nan=False)
+    gravity_lambda_per_min: float | None = Field(default=0.08, gt=0, allow_inf_nan=False)
+    population_trip_rate_per_person_h: float = Field(default=0.1, gt=0, allow_inf_nan=False)
+    population_zone_limit: int = Field(default=100, ge=2)
+    road_capacity_pcu_h_per_lane: float = Field(default=1000, gt=0, allow_inf_nan=False)
+    default_lanes_per_direction: float = Field(default=1, gt=0, allow_inf_nan=False)
+    lane_width_m: float = Field(default=3.5, gt=0, allow_inf_nan=False)
     edge_times_csv: Path | None = None
     capacity_csv: Path | None = None
     capacity_pcu_h: float | None = Field(default=None, gt=0, allow_inf_nan=False)
@@ -110,8 +115,6 @@ class TrafficConfig(StrictModel):
         if not self.period.strip():
             raise ValueError("traffic.period must be nonempty")
         if self.source == "assignment":
-            if self.capacity_csv is None and self.capacity_pcu_h is None:
-                raise ValueError("traffic assignment needs capacity_csv or capacity_pcu_h")
             if self.demand_source == "od_csv" and self.od_csv is None:
                 raise ValueError("traffic assignment needs od_csv")
             if self.demand_source == "od_csv" and self.zone_mass_csv is not None:
@@ -120,6 +123,10 @@ class TrafficConfig(StrictModel):
                                                     self.total_demand_pcu_h is None or
                                                     self.gravity_lambda_per_min is None):
                 raise ValueError("traffic gravity demand needs zone_mass_csv, total_demand_pcu_h and gravity_lambda_per_min")
+            if self.demand_source == "population" and self.gravity_lambda_per_min is None:
+                raise ValueError("traffic population demand needs gravity_lambda_per_min")
+            if self.demand_source == "population" and self.total_demand_pcu_h is not None:
+                raise ValueError("traffic population demand uses population_trip_rate_per_person_h, not total_demand_pcu_h")
             if self.demand_source == "gravity" and self.od_csv is not None:
                 raise ValueError("traffic demand must use either od_csv or zone_mass_csv, not both")
             if self.vdf == "conical" and abs(1 + math.hypot(self.alpha, self.beta) -

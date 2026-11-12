@@ -2,6 +2,7 @@
 
 import csv
 import math
+import re
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -135,6 +136,111 @@ def gravity_od(graph, free_flow_seconds, zone_mass_csv, total_demand_pcu_h,
             for j in range(len(zones)) if matrix[i, j] > 0}
 
 
+def population_gravity_od(graph, free_flow_seconds, population, trip_rate_per_person_h,
+                          gravity_lambda_per_min, zone_limit=100):
+    """Create synthetic node-to-node PCU demand from Tier 2 resident counts.
+
+    Total demand is population * the user-selected hourly effective PCU trip rate;
+    each origin/destination pair is weighted by both endpoint populations and
+    free-flow network distance decay.
+    """
+    population = np.asarray(population, dtype=float)
+    nodes = list(graph)
+    if population.shape != (len(nodes),) or not np.isfinite(population).all() or (population < 0).any():
+        raise ValueError("traffic: node population must be finite, nonnegative and match graph nodes")
+    rate = _positive(trip_rate_per_person_h, "population_trip_rate_per_person_h")
+    decay = _positive(gravity_lambda_per_min, "gravity_lambda_per_min")
+    total_demand = float(population.sum()) * rate
+    active = [(node, float(mass)) for node, mass in zip(nodes, population) if mass > 0]
+    if len(active) < 2 or not math.isfinite(total_demand) or total_demand <= 0:
+        raise ValueError("traffic: population demand needs positive population at two or more nodes")
+    if len(active) > zone_limit:
+        try:
+            coordinates = {node: (float(graph.nodes[node]["x"]), float(graph.nodes[node]["y"]))
+                           for node, _ in active}
+        except (KeyError, TypeError, ValueError) as exc:
+            raise ValueError("traffic: population zoning needs finite node x,y coordinates") from exc
+        if not all(math.isfinite(value) for point in coordinates.values() for value in point):
+            raise ValueError("traffic: population zoning needs finite node x,y coordinates")
+        side = math.ceil(math.sqrt(zone_limit))
+        xs, ys = [point[0] for point in coordinates.values()], [point[1] for point in coordinates.values()]
+        xmin, xmax, ymin, ymax = min(xs), max(xs), min(ys), max(ys)
+        groups = {}
+        for node, mass in active:
+            x, y = coordinates[node]
+            ix = min(side - 1, int((x - xmin) / (xmax - xmin) * side)) if xmax > xmin else 0
+            iy = min(side - 1, int((y - ymin) / (ymax - ymin) * side)) if ymax > ymin else 0
+            groups.setdefault((ix, iy), []).append((node, mass))
+        zoned = []
+        for members in groups.values():
+            mass = math.fsum(value for _, value in members)
+            center_x = math.fsum(coordinates[node][0] * value for node, value in members) / mass
+            center_y = math.fsum(coordinates[node][1] * value for node, value in members) / mass
+            representative = min(members, key=lambda item: (
+                (coordinates[item[0]][0] - center_x) ** 2 + (coordinates[item[0]][1] - center_y) ** 2,
+                str(item[0])))[0]
+            zoned.append((representative, mass))
+        active = zoned
+
+    simple = nx.DiGraph()
+    simple.add_nodes_from(nodes)
+    for u, v, key, _ in _arcs(graph):
+        time = _positive(free_flow_seconds[(u, v, key)], "free_flow_time_s")
+        if not simple.has_edge(u, v) or time < simple[u][v]["weight"]:
+            simple.add_edge(u, v, weight=time)
+    weights = {}
+    for origin, origin_pop in active:
+        distances = nx.single_source_dijkstra_path_length(simple, origin, weight="weight")
+        for destination, destination_pop in active:
+            if origin != destination and destination in distances:
+                impedance = math.exp(-decay * distances[destination] / 60)
+                weights[(origin, destination)] = origin_pop * destination_pop * impedance
+    denominator = math.fsum(weights.values())
+    if not denominator:
+        raise ValueError("traffic: populated nodes have no reachable inter-node destinations")
+    return {pair: total_demand * weight / denominator for pair, weight in weights.items()}
+
+
+def _tag_number(value):
+    if isinstance(value, (list, tuple)):
+        value = value[0] if value else None
+    match = re.search(r"\d+(?:\.\d+)?", str(value)) if value is not None else None
+    return float(match.group()) if match else None
+
+
+def _road_capacities(arcs, config):
+    capacities, attributes, counts = {}, {}, {"lanes_tagged": 0, "width_tagged": 0, "fallback": 0}
+    for u, v, key, data in arcs:
+        width = _tag_number(data.get("width"))
+        lanes = _tag_number(data.get("lanes"))
+        if (width is not None and width <= 0) or (lanes is not None and lanes <= 0):
+            raise ValueError(f"traffic: road width and lanes tags must be positive on edge {(u, v, key)!r}")
+        one_way = str(data.get("oneway", "")).lower() in {"yes", "true", "1", "-1"}
+        direction_factor = 1 if one_way else 0.5
+        width_tag = str(data.get("width", "")).lower()
+        if width is not None and ("ft" in width_tag or "feet" in width_tag or "'" in width_tag):
+            width *= 0.3048
+        if lanes is not None:
+            directional_lanes = lanes * direction_factor
+            counts["lanes_tagged"] += 1
+            source = "lanes_tag"
+        elif width is not None:
+            directional_lanes = width / config.lane_width_m * direction_factor
+            counts["width_tagged"] += 1
+            source = "width_inferred_lanes"
+        else:
+            directional_lanes = config.default_lanes_per_direction
+            counts["fallback"] += 1
+            source = "default_lanes"
+        if directional_lanes <= 0:
+            raise ValueError(f"traffic: road edge {(u, v, key)!r} has no positive effective lanes")
+        edge = (u, v, key)
+        capacities[edge] = directional_lanes * config.road_capacity_pcu_h_per_lane
+        attributes[edge] = {"width_m": width, "lanes_tag": lanes,
+                            "effective_lanes": directional_lanes, "capacity_source": source}
+    return capacities, attributes, counts
+
+
 def _travel_times(free_flow, capacity, volume, vdf, alpha, beta):
     ratio = volume / capacity
     if vdf == "bpr":
@@ -238,9 +344,10 @@ def assign_traffic(graph, free_flow_seconds, capacity_pcu_h, demand, *, vdf="bpr
                                               "delay_pcu_hours": float(np.dot(volume, times - free) / 3600)}
 
 
-def prepare_traffic(graph, config, free_flow_seconds=None):
+def prepare_traffic(graph, config, free_flow_seconds=None, population=None):
     """Build traffic results for pipeline export and time-model consumption."""
     arcs, lookup = _edge_lookup(graph)
+    capacity_attributes = {}
     if config.source == "edge_times_csv":
         times = _read_edges(config.edge_times_csv, lookup, "travel_time_s")
         metrics = {edge: {"congested_time_s": value} for edge, value in times.items()}
@@ -252,12 +359,25 @@ def prepare_traffic(graph, config, free_flow_seconds=None):
         if config.demand_source == "gravity":
             demand = gravity_od(graph, free_flow_seconds, config.zone_mass_csv,
                                 config.total_demand_pcu_h, config.gravity_lambda_per_min)
+        elif config.demand_source == "population":
+            if population is None:
+                raise ValueError("traffic: population-based demand requires Tier 2 node populations")
+            demand = population_gravity_od(graph, free_flow_seconds, population,
+                config.population_trip_rate_per_person_h, config.gravity_lambda_per_min,
+                config.population_zone_limit)
         else:
             demand = _read_od(config.od_csv, graph)
         if config.capacity_csv is not None:
             capacity = _read_edges(config.capacity_csv, lookup, "capacity_pcu_h")
-        else:
+            capacity_attributes = {}
+            capacity_source = "directed_csv"
+        elif config.capacity_pcu_h is not None:
             capacity = {edge: config.capacity_pcu_h for edge in lookup.values()}
+            capacity_attributes = {}
+            capacity_source = "uniform_assumption"
+        else:
+            capacity, capacity_attributes, tag_counts = _road_capacities(arcs, config)
+            capacity_source = "road_attributes"
         metrics, assignment = assign_traffic(
             graph, free_flow_seconds, capacity, demand, vdf=config.vdf, alpha=config.alpha,
             beta=config.beta, relative_gap=config.relative_gap, max_iterations=config.max_iterations)
@@ -267,9 +387,21 @@ def prepare_traffic(graph, config, free_flow_seconds=None):
                    "arc_count": len(arcs), "period": config.period,
                    "duration_h": config.duration_h,
                    "demand_source": config.demand_source,
-                   "capacity_source": "directed_csv" if config.capacity_csv else "uniform_assumption"}
+                   "capacity_source": capacity_source}
+        if capacity_source == "road_attributes":
+            summary["capacity_tag_coverage"] = tag_counts
+            summary["road_capacity_pcu_h_per_lane"] = config.road_capacity_pcu_h_per_lane
+            summary["default_lanes_per_direction"] = config.default_lanes_per_direction
+            summary["lane_width_m"] = config.lane_width_m
+        if config.demand_source == "population":
+            summary["population_trip_rate_per_person_h"] = config.population_trip_rate_per_person_h
+            summary["gravity_lambda_per_min"] = config.gravity_lambda_per_min
+            summary["populated_node_count"] = int(np.count_nonzero(population))
+            summary["population_zone_count"] = len({node for pair in demand for node in pair})
+            summary["population_zone_limit"] = config.population_zone_limit
         times = {edge: row["congested_time_s"] for edge, row in metrics.items()}
-    rows = [{"u": str(u), "v": str(v), "key": str(key), **metrics[(u, v, key)]}
+    rows = [{"u": str(u), "v": str(v), "key": str(key), **metrics[(u, v, key)],
+             **(capacity_attributes.get((u, v, key), {}))}
             for u, v, key, _ in arcs]
     od_rows = (_od_skims(graph, demand, free_flow_seconds, times)
                if config.source == "assignment" else [])
@@ -330,7 +462,8 @@ def evaluate_closures(graph, links, result, free_flow_seconds, config):
 
 def write_traffic_csv(result, path):
     fields = ["u", "v", "key", "free_flow_time_s", "capacity_pcu_h", "assigned_volume_pcu_h",
-              "vc_ratio", "congested_time_s", "delay_s"]
+              "vc_ratio", "congested_time_s", "delay_s", "width_m", "lanes_tag",
+              "effective_lanes", "capacity_source"]
     with Path(path).open("w", newline="") as stream:
         writer = csv.DictWriter(stream, fieldnames=fields)
         writer.writeheader()

@@ -43,9 +43,18 @@ def build_report(summary):
             f"  Directed arcs: {traffic['arc_count']}"])
         if traffic["source"] == "assignment":
             lines.extend([f"  Demand: {traffic['demand_pcu_h']:.6g} PCU/h",
+                f"  Demand source: {traffic['demand_source']}; capacity source: {traffic['capacity_source']}",
                 f"  VDF: {traffic['vdf']} (alpha={traffic['alpha']}, beta={traffic['beta']})",
                 f"  Relative gap: {traffic['relative_gap']:.6g} after {traffic['iterations']} iterations",
                 f"  Total system travel time: {traffic['tstt_pcu_hours']:.6g} PCU-hours",
                 f"  Mean OD time/delay: {traffic['mean_od_time_s']:.6g} / {traffic['mean_od_delay_s']:.6g} seconds",
                 "  Traffic inputs are simulated/supplied scenario assumptions, not observed counts."])
+            if traffic["demand_source"] == "population":
+                lines.append(f"  Effective rate: {traffic['population_trip_rate_per_person_h']:.6g} PCU/person/hour")
+                lines.append(f"  Population zones: {traffic['population_zone_count']} of "
+                    f"{traffic['populated_node_count']} populated nodes")
+            if traffic["capacity_source"] == "road_attributes":
+                coverage = traffic["capacity_tag_coverage"]
+                lines.append(f"  Capacity tags (directed arcs): lanes={coverage['lanes_tagged']}, "
+                    f"width-only={coverage['width_tagged']}, defaults={coverage['fallback']}")
     return "\n".join(lines) + "\n"

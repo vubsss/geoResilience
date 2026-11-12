@@ -1,7 +1,7 @@
 # Tier 4: simulated traffic, congested edge costs and disruption
 
 Planning baseline: 4 November 2026; framework scope clarified 5 November 2026.
-Status: initial assignment integrated with the current directory-based CLI; city-scale zones and CTS class mapping remain planned.
+Status: initial assignment and population-derived demand/capacity are integrated with the current CLI; calibration and CTS class mapping remain planned.
 Scope: reusable road-network testing framework; Hyderabad is the first case study.
 
 ## Objective
@@ -54,7 +54,8 @@ a later extension after targeted closures are practical.
 
 Traffic-aware reliability reuses the current `PreparedTimeModel` interface. Traffic zones and
 OD/capacity CSVs refer to node and directed-edge IDs in the cleaned input graph. The current CLI
-does not automatically derive zones from WorldPop or infer CTS capacity classes from OSM tags.
+can also aggregate Tier 2 node population into projected-coordinate grid zones and infer generic
+directional capacity from OSM width/lanes tags; it does not yet map roads to calibrated CTS classes.
 Future accessibility work can reuse the congested-time baseline when that analysis is enabled.
 
 ## Formula provenance and Hyderabad example
@@ -160,6 +161,26 @@ crossing it; report this boundary assumption and vary external demand.
 
 ### 3. OD demand: generate or supply
 
+**Implemented population mode (prototype):** all Tier 2 resident counts are conserved while nodes
+are aggregated into up to 100 projected-coordinate grid cells. Each nonempty cell is represented by
+the populated road node nearest its population-weighted centroid. The currently implemented OD
+weighting is:
+
+```text
+w_ij = P_i P_j exp(-lambda * free_flow_minutes_ij), i != j
+q_ij = sum(P) * effective_pcu_trips_per_person_hour * w_ij / sum(w_kl)
+```
+
+This deterministic normalization allocates a single total demand across reachable pairs; it is not
+the doubly constrained balancing model described below. The exact population-product formula is a
+project-specific gravity adaptation, not directly copied from a research paper or Hyderabad CTS.
+The defaults (`0.1 PCU/person/hour`, `lambda=0.08/minute`) are illustrative assumptions, not local
+measurements. The effective rate bundles trip generation, motorized share and PCU conversion and
+must be calibrated or varied before volumes are interpreted as realistic. The zone limit and all
+these parameters are recorded in outputs.
+
+**Planned alternative:**
+
 Use a doubly constrained gravity model to generate one reproducible simulation scenario:
 
 ```text
@@ -196,7 +217,8 @@ The default CLI must not invent authoritative local values. Ship a clearly label
 `illustrative` profile for the frozen demonstration and require a profile or OD file for a real
 run.
 
-For a richer Hyderabad scenario, add destination attraction from employment, enrolled students
+The CLI currently supplies explicit illustrative defaults so the framework can run without an OD
+file; they are not authoritative local values. For a richer Hyderabad scenario, add destination attraction from employment, enrolled students
 and land use. The CTS used Population, Earners, Resident Students, Students Enrolled and Total
 Employment and calibrated separate Work, Education, Other and Non-Home-Based purposes. It tested
 eight deterrence functions and selected a purpose-specific Tanner alternative instead of one
@@ -204,6 +226,14 @@ exponential decay. Its coefficients require matching variable definitions, time 
 units and zones; until then, they are documented priors or comparison scenarios.
 
 ### 4. Free-flow time and directional capacity
+
+The current prototype uses the OSM `lanes` tag first, otherwise infers lane-equivalents from
+`width` using the configured 3.5 m lane-width assumption. Two-way totals are split evenly;
+one-way tags apply their lane count to the directed arc. If both tags are absent it assumes one
+lane per direction. Each effective lane is assigned the illustrative default of 1000 PCU/h. These
+are generic project assumptions, not the CTS class-specific calibrated capacities. The traffic
+summary records directed-arc coverage for tagged lanes, width-only inference and fallbacks; the
+arc CSV retains each edge's input width/lanes and derived capacity source.
 
 Reuse the existing time-model interface for `t0`, with
 `t0_s = 3.6 * length_m / free_flow_speed_kph`. Record whether speed came from an OSM tag, the
@@ -215,7 +245,7 @@ capacity from:
 capacity_e = usable_directional_lanes_e * capacity_per_lane(highway_class)
 ```
 
-Parse `lanes`, `lanes:forward` and `lanes:backward` where usable. Select a named road-class
+The next capacity step is to parse `lanes:forward` and `lanes:backward` where usable and select a named road-class
 capacity profile or user-supplied capacities; Hyderabad's `hmda_cts_2011` table above is one
 option. Retain `capacity_source` on every arc. Never interpret total two-way lanes as lanes in
 each direction. OSM tags are incomplete and do not encode all intersection, parking, encroachment

@@ -6,7 +6,7 @@ from types import SimpleNamespace
 import networkx as nx
 import pytest
 
-from georesilience.traffic import (assign_traffic, evaluate_closures, gravity_od, prepare_traffic,
+from georesilience.traffic import (assign_traffic, evaluate_closures, gravity_od, population_gravity_od, prepare_traffic,
                                   write_traffic_closures_csv, write_traffic_csv, write_traffic_od_csv)
 
 
@@ -129,6 +129,39 @@ def test_gravity_generates_balanced_synthetic_od(tmp_path):
             for node in graph] == pytest.approx([60, 120, 120])
     assert [sum(value for (_, v), value in unbalanced.items() if v == node)
             for node in graph] == pytest.approx([60, 120, 120])
+
+
+def test_population_demand_and_road_attribute_capacities():
+    graph = nx.MultiDiGraph()
+    for origin, destination in ((0, 1), (1, 0), (0, 2), (2, 0), (1, 2), (2, 1)):
+        attrs = {"length": 1000, "lanes": "2", "width": "7 m"}
+        graph.add_edge(origin, destination, key=0, **attrs)
+    edges = list(graph.edges(keys=True))
+    free = {edge: 60 for edge in edges}
+    demand = population_gravity_od(graph, free, [10, 20, 0], .1, .08)
+    assert sum(demand.values()) == pytest.approx(3)
+    assert demand == pytest.approx({(0, 1): 1.5, (1, 0): 1.5})
+
+    graph[0][1][0]["oneway"] = True
+    del graph[1][2][0]["lanes"]
+    del graph[0][2][0]["lanes"]
+    del graph[0][2][0]["width"]
+    config = SimpleNamespace(source="assignment", demand_source="population", od_csv=None,
+        zone_mass_csv=None, total_demand_pcu_h=None, gravity_lambda_per_min=.08,
+        population_trip_rate_per_person_h=.1, population_zone_limit=100,
+        capacity_csv=None, capacity_pcu_h=None,
+        road_capacity_pcu_h_per_lane=1000, default_lanes_per_direction=1,
+        lane_width_m=3.5, vdf="bpr", alpha=.15, beta=4, relative_gap=1e-4,
+        max_iterations=20, period="demo", duration_h=1, closure_top_n=0)
+    result = prepare_traffic(graph, config, free, [10, 20, 0])
+    assert result.summary["capacity_source"] == "road_attributes"
+    assert result.summary["demand_pcu_h"] == pytest.approx(3)
+    assert result.summary["capacity_tag_coverage"] == {
+        "lanes_tagged": 4, "width_tagged": 1, "fallback": 1}
+    by_edge = {(row["u"], row["v"]): row for row in result.rows}
+    assert by_edge[("0", "1")]["effective_lanes"] == 2
+    assert by_edge[("1", "2")]["capacity_source"] == "width_inferred_lanes"
+    assert by_edge[("0", "2")]["capacity_source"] == "default_lanes"
 
 
 def test_physical_closure_reassignment_and_disconnection(tmp_path):

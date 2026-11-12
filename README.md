@@ -49,12 +49,45 @@ Existing nonempty output requires `--overwrite`. Overwrite removes recognised ge
 
 ## Tier 4 traffic scenarios
 
-Traffic assignment is optional. It uses directed OD demand or a synthetic doubly constrained
-gravity matrix, a capacity assumption, and the BPR or conical volume-delay function. The assigned
-congested seconds become the baseline travel-time cost used by reliability. Demand and capacity
-inputs are scenario assumptions unless calibrated from local observations.
+Traffic assignment is optional. By default, `--simulate-traffic` uses the Tier 2 population
+allocated to each retained road node to generate synthetic OD demand, and derives directed road
+capacity from OSM width/lanes tags. The BPR or conical volume-delay function assigns traffic; its
+congested seconds become the baseline travel-time cost used by reliability. This is a simulated
+scenario, not observed traffic.
 
-For synthetic gravity demand, provide zone nodes from the cleaned road graph in a CSV with
+In population mode, total hourly demand is `sum(node_population) * trip_rate`; each reachable
+non-intrazonal OD pair is weighted by `P_origin * P_destination * exp(-lambda * free_flow_minutes)`
+and normalized to that total. To keep the assignment tractable on larger networks, populated nodes
+are grouped into up to 100 projected-coordinate grid zones by default; each zone retains the sum of
+its constituent Tier 2 node populations and is represented by a nearby road node. Change the limit
+with `--traffic-population-zone-limit`. This project-specific gravity weighting is not copied directly from
+a Hyderabad paper. The default effective trip rate is `0.1 PCU/person/hour` and gravity decay is
+`0.08 per minute`; they are illustrative assumptions, not values taken from a Hyderabad study or
+calibrated local counts. The effective trip rate bundles trip generation, motorized mode share, and
+vehicle/PCU conversion, so it must be calibrated before interpreting the volumes as realistic.
+Override the assumptions with `--traffic-population-trip-rate-per-person-h` and
+`--traffic-gravity-lambda-per-min`.
+
+Capacity uses `lanes` when tagged; for two-way roads the total lane count is split equally by
+direction, while one-way lanes apply to that directed arc. If lanes are absent, `width` is converted
+to lane-equivalents using 3.5 m per lane, again split for two-way roads. If both tags are absent,
+the model assumes one lane per direction. Effective lane capacity defaults to `1000 PCU/hour/lane`.
+These defaults are not Hyderabad calibrations and can be changed with
+`--traffic-capacity-per-lane-pcu-h`, `--traffic-default-lanes-per-direction`, and
+`--traffic-lane-width-m`. Tagged width/lanes coverage and these defaults are recorded in the run
+summary and manifest. Explicit `--traffic-capacities` or `--traffic-capacity-pcu-h` override the
+derived capacities.
+
+To run the population-based case study:
+
+```sh
+georesilience run input/hyderabad --out results/hyderabad-traffic \
+  --simulate-traffic --traffic-period weekday_am_peak
+```
+
+Alternatively, use explicit OD demand or zone masses. The CSV contracts are described below.
+
+For user-specified synthetic gravity demand, provide zone nodes from the cleaned road graph in a CSV with
 `node,mass` columns, then run:
 
 ```sh
@@ -64,7 +97,8 @@ georesilience run input/hyderabad --out results/hyderabad-traffic \
   --traffic-capacity-pcu-h 1000 --traffic-period weekday_am_peak
 ```
 
-The example values are illustrative. Add `--simulate-traffic` for every traffic mode.
+The example values are illustrative. `--traffic-zones` or `--traffic-od` selects that demand source;
+without either, simulation uses node population automatically. Add `--simulate-traffic` for every traffic mode.
 `--traffic-od FILE` accepts columns
 `origin,destination,demand_pcu_h` using cleaned graph node IDs. Replace the uniform capacity with
 `--traffic-capacities FILE` (`u,v,key,capacity_pcu_h`) for directed edge-specific capacities, or

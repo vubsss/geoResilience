@@ -3,11 +3,11 @@
 Audit date: 4 November 2026; framework scope clarified 5 November 2026.
 
 This document is the Hyderabad case-study source audit for the reusable Tier 4 framework in
-[TIER4.md](TIER4.md). The framework can simulate traffic on a Hyderabad OSM network using a
-declared OD-demand scenario and explicit speed/capacity assumptions. The published CTS profile is
-a candidate prior; automatic mapping of OSM road tags to its classes is not implemented yet. A
-run needs no current observed link-level data, but outputs are scenario estimates, not measured
-Hyderabad congestion.
+[TIER4.md](TIER4.md). The framework can simulate traffic on a Hyderabad OSM network using Tier 2
+node population, OSM width/lanes tags and declared model assumptions, or supplied OD/capacity data.
+The published CTS profile is a candidate prior; automatic mapping of OSM road tags to its classes
+is not implemented yet. A run needs no current observed link-level data, but outputs are scenario
+estimates, not measured Hyderabad congestion.
 Each source below either supplies an input assumption, supports a method, or checks plausibility;
 a citation is not automatically an available dataset.
 
@@ -102,6 +102,12 @@ q_ij = A_i O_i B_j D_j exp(-lambda * t0_ij),  i != j
 - **What is ours?** Using WorldPop resident population to construct both `O_i` and `D_j` is a
   data-limited project adaptation. It has conceptual backing as a gravity simulation but is not
   directly taken from the Hyderabad CTS and is not an observed OD matrix.
+- **Current implementation detail:** Tier 2 counts are aggregated into at most 100 projected-grid
+  zones. Pair weights are `P_i * P_j * exp(-lambda * free_flow_minutes)` for `i != j`, normalized
+  to `sum(P) * effective_PCU_trips_per_person_hour`. This simple normalization is the project's
+  implementation choice; it is not the doubly constrained balancing equation above. The current
+  effective rate default (0.1 PCU/person/hour) and decay (0.08/minute) are illustrative, not
+  Hyderabad-sourced or calibrated values. No citation is claimed for those numerical defaults.
 - **Hyderabad difference:** the CTS used purpose-specific production/attraction variables,
   including population, earners, resident students, enrolled students and total employment, and
   selected a purpose-specific Tanner deterrence form. That is the better destination model if

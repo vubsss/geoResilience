@@ -131,7 +131,7 @@ def run(config: RunConfig, out_override=None, overwrite=False, *, time_model=Non
             if free_flow.summary["status"] != "computed":
                 raise ValueError("traffic assignment requires resolvable edge speeds; use --speed or supply maxspeed tags")
         traffic = prepare_traffic(graph, config.traffic,
-            free_flow.edge_seconds if free_flow is not None else None)
+            free_flow.edge_seconds if free_flow is not None else None, population.weights)
         if config.traffic.source == "assignment" and config.traffic.closure_top_n:
             evaluate_closures(graph, links, traffic, free_flow.edge_seconds, config.traffic)
             traffic.summary["closures"] = traffic.closure_rows

@@ -55,13 +55,23 @@ def main(argv=None):
     analysis.add_argument("--time-model", choices=("free-flow", "edge-attribute"), default="free-flow")
     analysis.add_argument("--time-attribute", default="travel_time_s", help="edge-attribute cost in seconds")
     analysis.add_argument("--speed", action="append", metavar="HIGHWAY=KPH")
-    analysis.add_argument("--simulate-traffic", action="store_true", help="run Tier 4 assignment using supplied OD demand or synthetic gravity demand")
+    analysis.add_argument("--simulate-traffic", action="store_true", help="run Tier 4 assignment using node population by default, or supplied OD/zones")
     analysis.add_argument("--traffic-od", type=Path, help="CSV with origin,destination,demand_pcu_h node IDs")
     analysis.add_argument("--traffic-zones", type=Path, help="CSV with node,mass for synthetic gravity demand")
     analysis.add_argument("--traffic-demand-pcu-h", type=float)
-    analysis.add_argument("--traffic-gravity-lambda-per-min", type=float)
+    analysis.add_argument("--traffic-gravity-lambda-per-min", type=float, default=0.08)
+    analysis.add_argument("--traffic-population-trip-rate-per-person-h", type=float, default=0.1,
+        help="assumed motorized PCU trips per resident per hour for population-based demand")
+    analysis.add_argument("--traffic-population-zone-limit", type=int, default=100,
+        help="maximum population-weighted spatial zones used to bound OD assignment size")
     analysis.add_argument("--traffic-capacity-pcu-h", type=float, help="uniform directed-edge capacity assumption")
     analysis.add_argument("--traffic-capacities", type=Path, help="CSV with u,v,key,capacity_pcu_h")
+    analysis.add_argument("--traffic-capacity-per-lane-pcu-h", type=float, default=1000,
+        help="assumed capacity per effective lane when deriving from width/lanes (default: 1000)")
+    analysis.add_argument("--traffic-default-lanes-per-direction", type=float, default=1,
+        help="fallback effective lanes per direction when both width and lanes are untagged")
+    analysis.add_argument("--traffic-lane-width-m", type=float, default=3.5,
+        help="assumed lane width for inferring lanes from road width")
     analysis.add_argument("--traffic-edge-times", type=Path, help="CSV with u,v,key,travel_time_s; bypasses assignment")
     analysis.add_argument("--traffic-period", default="illustrative_one_hour")
     analysis.add_argument("--traffic-duration-h", type=float, default=1)
@@ -120,12 +130,17 @@ def main(argv=None):
                     "highway_speeds_kph": _assignments(args.speed, "--speed") if args.speed else None},
                 traffic={"enabled": args.simulate_traffic, "source": "edge_times_csv" if args.traffic_edge_times else "assignment",
                     "period": args.traffic_period, "duration_h": args.traffic_duration_h,
-                    "demand_source": "gravity" if args.traffic_zones else "od_csv",
+                    "demand_source": "gravity" if args.traffic_zones else "od_csv" if args.traffic_od else "population",
                     "od_csv": args.traffic_od, "zone_mass_csv": args.traffic_zones,
                     "total_demand_pcu_h": args.traffic_demand_pcu_h,
                     "gravity_lambda_per_min": args.traffic_gravity_lambda_per_min,
+                    "population_trip_rate_per_person_h": args.traffic_population_trip_rate_per_person_h,
+                    "population_zone_limit": args.traffic_population_zone_limit,
                     "edge_times_csv": args.traffic_edge_times, "capacity_csv": args.traffic_capacities,
                     "capacity_pcu_h": args.traffic_capacity_pcu_h, "vdf": args.traffic_vdf,
+                    "road_capacity_pcu_h_per_lane": args.traffic_capacity_per_lane_pcu_h,
+                    "default_lanes_per_direction": args.traffic_default_lanes_per_direction,
+                    "lane_width_m": args.traffic_lane_width_m,
                     "alpha": args.traffic_alpha, "beta": args.traffic_beta,
                     "relative_gap": args.traffic_relative_gap, "max_iterations": args.traffic_max_iterations,
                     "closure_top_n": args.traffic_closure_top_n},
