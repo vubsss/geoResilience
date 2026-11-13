@@ -157,7 +157,7 @@ def test_population_demand_and_road_attribute_capacities():
     assert result.summary["capacity_source"] == "road_attributes"
     assert result.summary["demand_pcu_h"] == pytest.approx(3)
     assert result.summary["capacity_tag_coverage"] == {
-        "lanes_tagged": 4, "width_tagged": 1, "fallback": 1}
+        "lanes_tagged": 4, "width_tagged": 1, "fallback": 1, "invalid_tag_arcs": 0}
     by_edge = {(row["u"], row["v"]): row for row in result.rows}
     assert by_edge[("0", "1")]["effective_lanes"] == 2
     assert by_edge[("1", "2")]["capacity_source"] == "width_inferred_lanes"

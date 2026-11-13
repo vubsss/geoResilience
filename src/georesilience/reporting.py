@@ -56,5 +56,6 @@ def build_report(summary):
             if traffic["capacity_source"] == "road_attributes":
                 coverage = traffic["capacity_tag_coverage"]
                 lines.append(f"  Capacity tags (directed arcs): lanes={coverage['lanes_tagged']}, "
-                    f"width-only={coverage['width_tagged']}, defaults={coverage['fallback']}")
+                    f"width-only={coverage['width_tagged']}, defaults={coverage['fallback']}, "
+                    f"invalid tags={coverage['invalid_tag_arcs']}")
     return "\n".join(lines) + "\n"

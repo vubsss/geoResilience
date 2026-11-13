@@ -204,17 +204,22 @@ def population_gravity_od(graph, free_flow_seconds, population, trip_rate_per_pe
 def _tag_number(value):
     if isinstance(value, (list, tuple)):
         value = value[0] if value else None
-    match = re.search(r"\d+(?:\.\d+)?", str(value)) if value is not None else None
+    match = re.search(r"-?\d+(?:\.\d+)?", str(value)) if value is not None else None
     return float(match.group()) if match else None
 
 
 def _road_capacities(arcs, config):
-    capacities, attributes, counts = {}, {}, {"lanes_tagged": 0, "width_tagged": 0, "fallback": 0}
+    capacities, attributes, counts = {}, {}, {
+        "lanes_tagged": 0, "width_tagged": 0, "fallback": 0, "invalid_tag_arcs": 0}
     for u, v, key, data in arcs:
-        width = _tag_number(data.get("width"))
-        lanes = _tag_number(data.get("lanes"))
-        if (width is not None and width <= 0) or (lanes is not None and lanes <= 0):
-            raise ValueError(f"traffic: road width and lanes tags must be positive on edge {(u, v, key)!r}")
+        width_tag_value, lanes_tag_value = data.get("width"), data.get("lanes")
+        width, lanes = _tag_number(width_tag_value), _tag_number(lanes_tag_value)
+        invalid_tag = ((width_tag_value not in (None, "") and (width is None or width <= 0)) or
+                       (lanes_tag_value not in (None, "") and (lanes is None or lanes <= 0)))
+        if invalid_tag:
+            counts["invalid_tag_arcs"] += 1
+        width = width if width is not None and width > 0 else None
+        lanes = lanes if lanes is not None and lanes > 0 else None
         one_way = str(data.get("oneway", "")).lower() in {"yes", "true", "1", "-1"}
         direction_factor = 1 if one_way else 0.5
         width_tag = str(data.get("width", "")).lower()
