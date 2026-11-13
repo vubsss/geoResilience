@@ -49,6 +49,24 @@ Existing nonempty output requires `--overwrite`. Overwrite removes recognised ge
 
 ## Failure probabilities
 
+For flood-induced event probabilities, the new `closure` command accepts this
+repository's cleaned `network.gpkg` directly, preserves its `nodes` and `edges`,
+and writes `network_with_closure.gpkg`:
+
+```sh
+georesilience closure --roads results/hyderabad/network.gpkg --config scenario.json --out results/hyderabad_closure
+```
+
+With roads alone (omit `--config`), every road receives the same per-event
+probability, 0.01. With supplied depths or DEM/rainfall, the pipeline calculates
+depth-based probabilities and records input recovery and assumptions. See the
+[closure usage guide](docs/road_closure_pipeline.md),
+[research and parameter evidence](docs/road_closure_research.md), and
+[synthetic demonstration](examples/closure/demo.py).
+Software checks and solver-test commands are in
+[closure testing](docs/road_closure_testing.md). Outputs are uncalibrated
+scenario estimates; numerical defaults are documented project assumptions.
+
 Generate a template using the same network and cleaning settings as the analysis:
 
 ```sh

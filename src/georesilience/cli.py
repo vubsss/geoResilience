@@ -69,6 +69,13 @@ def main(argv=None):
     _network_flags(analysis)
     template = commands.add_parser("failures-template", help="export fingerprint-bound physical-link probabilities")
     _network_flags(template)
+    closure = commands.add_parser("closure", help="attach event flood-closure probabilities to cleaned roads")
+    closure.add_argument("--roads", required=True, type=Path, help="cleaned network.gpkg; no population input required")
+    closure.add_argument("--config", type=Path, help="scenario JSON; paths are relative to this file")
+    closure.add_argument("--out", required=True, type=Path)
+    closure.add_argument("--layer", help="input road layer (default: edges)")
+    closure.add_argument("--failure-template", type=Path, help="fingerprint-bound template for optional analysis CSV")
+    closure.add_argument("--overwrite", action="store_true", default=None)
     analysis.add_argument("--no-figures", action="store_true")
     analysis.add_argument("--population-importance", type=float, help="population-share coefficient in combined node importance (default: 1; requires --facilities)")
     analysis.add_argument("--facilities", type=Path, help="explicit WGS84 school/hospital CSV")
@@ -98,6 +105,20 @@ def main(argv=None):
     analysis.add_argument("--max-memory-gb", default="auto", metavar="auto|N", help="shortest-path/simulation workspace budget; input graph storage is additional")
     args = parser.parse_args(argv)
     try:
+        if args.command == "closure":
+            from .closure import enrich_road_closures
+            from .closure.config import load_config
+            closure_config = load_config(
+                args.config,
+                roads=args.roads,
+                out=args.out,
+                layer=args.layer,
+                failure_template=args.failure_template,
+                overwrite=args.overwrite,
+            )
+            result = enrich_road_closures(closure_config)
+            print(f"Enriched {result.road_count} roads: {result.network}", flush=True)
+            return 0
         config = directory_config(args.input_dir, boundary=args.boundary, network_type=args.network_type,
             consolidation_m=args.consolidation_m, consolidate=not args.no_consolidation, snap_max_m=args.snap_max_m,
             allow_missing_population=args.command == "run" and args.facilities is not None)

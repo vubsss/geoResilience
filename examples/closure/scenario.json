@@ -1,0 +1,9 @@
+{
+  "scenario_id": "synthetic_format_example",
+  "dem": "../../data/dem.tif",
+  "rainfall": {"series": "event_rainfall.csv", "duration_hours": 6},
+  "simulation": {"recession_hours": 6},
+  "uniform_probability": 0.01,
+  "threshold_m": 0.30,
+  "dispersion": 0.35
+}

@@ -15,6 +15,7 @@ dependencies = [
 
 [project.optional-dependencies]
 test = ["pytest>=8"]
+closure-simulation = ["xarray==2025.1.2", "netCDF4==1.7.2", "pykrige==1.7.2"]
 
 [project.scripts]
 georesilience = "georesilience.cli:main"
