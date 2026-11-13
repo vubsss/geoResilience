@@ -9,3 +9,19 @@ Run the small example from the repository root:
 ```sh
 georesilience run tests/fixtures/tiny --out /tmp/georesilience-demo --no-figures --jobs 2 --connectivity-samples 64 --travel-time-samples 64
 ```
+
+
+Service fixtures `tiny/facilities.csv` and `tiny/facilities_weights_only.csv` use
+WGS84 points at retained nodes 0 and 8. The capacity-aware table has two schools
+(120 and 80 synthetic seats) and one hospital (12 synthetic staffed beds), each
+with declared synthetic provenance. The location-only table deliberately omits
+capacity columns. They represent no actual institutions. Run the weights-only
+and 2SFCA commands in README.md; both use these same road/population fixtures.
+Ten-minute example catchments are illustrative and require study calibration.
+
+Population adds to node importance as normalized population share plus normalized
+service-point share (population coefficient default 1). To inspect the no-data
+fallback, copy only `roads.graphml` to a temporary input directory and pass either
+facility table explicitly; demand is then one uniform unit per retained node.
+The checked-in population raster totals 45, so both fallback and real-count
+fixture modes can be verified independently.

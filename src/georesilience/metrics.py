@@ -179,7 +179,7 @@ CONSEQUENCE_FIELDS = tuple(field + suffix for field in (
     "efficiency_drop", "accessibility_drop", "disconnected_pair_fraction") for suffix in ("", "_pop"))
 
 
-def compute_link_consequences(graph, population, *, coverage="screened", candidate_limit=250, **settings):
+def compute_link_consequences(graph, population, *, coverage="screened", candidate_limit=250, service_nodes=(), **settings):
     import networkx as nx
     if coverage not in {"screened", "all"} or candidate_limit < 0:
         raise ValueError("coverage must be screened or all; candidate_limit must be nonnegative")
@@ -225,6 +225,9 @@ def compute_link_consequences(graph, population, *, coverage="screened", candida
         by_d = sorted(active, key=lambda r: (-(r["detour_ratio"] or 0), r["link_id"]))
         candidates = {row["link_id"] for row in by_b[:candidate_limit] + by_d[:candidate_limit]}
         candidates.update(row["link_id"] for row in active if row["is_bridge"] or row["detour_none"])
+    service_nodes = set(service_nodes)
+    candidates.update(row["link_id"] for row in active
+                      if row["_u"] in service_nodes or row["_v"] in service_nodes)
     for row in links:
         row["evaluated"] = row["link_id"] in candidates
         if row["evaluated"]:
@@ -248,10 +251,12 @@ def compute_link_consequences(graph, population, *, coverage="screened", candida
         "ids": [r["link_uid"] for r in active if r["evaluated"]],
         "method": "all non-self-loop links" if coverage == "all" else
             f"top {candidate_limit} by betweenness and finite detour, all bridges and links without alternatives"}}
+    if service_nodes and coverage == "screened":
+        counts["links"]["method"] += "; all links incident to positive-weight service nodes"
     return LocalResult(baseline, nodes, links, counts, redundancy, settings)
 
 
-def add_node_consequences(result, *, coverage="screened", candidate_limit=300):
+def add_node_consequences(result, *, coverage="screened", candidate_limit=300, service_nodes=()):
     if coverage not in {"screened", "all"} or candidate_limit < 0:
         raise ValueError("coverage must be screened or all; candidate_limit must be nonnegative")
     ordered = list(result.nodes)
@@ -259,6 +264,7 @@ def add_node_consequences(result, *, coverage="screened", candidate_limit=300):
     ranked = sorted(ordered, key=lambda node: (-result.nodes[node]["betweenness"], order[node]))
     candidates = (set(ordered) if coverage == "all" else set(ranked[:candidate_limit])
                   | {node for node in ordered if result.nodes[node]["is_articulation"]})
+    candidates.update(set(service_nodes) & set(ordered))
     for index, node in enumerate(ordered):
         row = result.nodes[node]
         row["evaluated"] = node in candidates
@@ -280,11 +286,13 @@ def add_node_consequences(result, *, coverage="screened", candidate_limit=300):
     result.coverage["nodes"] = {"mode": coverage, "evaluated": len(candidates), "total": len(ordered),
         "ids": [str(node) for node in ordered if node in candidates],
         "method": "all retained nodes" if coverage == "all" else f"top {candidate_limit} by betweenness and all articulation points"}
+    if service_nodes and coverage == "screened":
+        result.coverage["nodes"]["method"] += "; all positive-weight service nodes"
     return result
 
 
 def compute_local_metrics(graph, population, *, coverage="screened", link_candidate_limit=250,
-                          node_candidate_limit=300, **settings):
+                          node_candidate_limit=300, service_nodes=(), **settings):
     result = compute_link_consequences(graph, population, coverage=coverage,
-                                      candidate_limit=link_candidate_limit, **settings)
-    return add_node_consequences(result, coverage=coverage, candidate_limit=node_candidate_limit)
+                                      candidate_limit=link_candidate_limit, service_nodes=service_nodes, **settings)
+    return add_node_consequences(result, coverage=coverage, candidate_limit=node_candidate_limit, service_nodes=service_nodes)

@@ -25,7 +25,7 @@ def _assignments(values, label):
 
 
 def _network_flags(parser):
-    parser.add_argument("input_dir", type=Path, help="directory with exactly one road network and one count GeoTIFF")
+    parser.add_argument("input_dir", type=Path, help="directory with one road network and one count GeoTIFF (raster optional with --facilities)")
     parser.add_argument("--out", required=True, type=Path)
     parser.add_argument("--overwrite", action="store_true", help="replace known generated files, preserving unknown files")
     parser.add_argument("--boundary", type=Path)
@@ -33,6 +33,32 @@ def _network_flags(parser):
     parser.add_argument("--consolidation-m", type=float, default=15)
     parser.add_argument("--no-consolidation", action="store_true")
     parser.add_argument("--snap-max-m", type=float, default=500)
+
+
+def _service_settings(args):
+    options = (args.service_mode, args.service_importance, args.service_catchment_minutes,
+               args.service_unit, args.facility_snap_max_m, args.population_importance)
+    if args.facilities is None:
+        if any(value is not None for value in options):
+            raise ValueError("service options require --facilities PATH")
+        return None
+    values = {"facilities_csv": args.facilities,
+        "mode": "sfca" if args.service_mode == "2sfca" else "weights_only",
+        "population_importance": 1 if args.population_importance is None else args.population_importance,
+        "snap_max_m": 500 if args.facility_snap_max_m is None else args.facility_snap_max_m,
+        "school": {}, "hospital": {}}
+    for entries, option, field in ((args.service_importance, "--service-importance", "importance"),
+            (args.service_catchment_minutes, "--service-catchment-minutes", "catchment_minutes")):
+        for category, value in _assignments(entries, option).items():
+            if category not in ("school", "hospital"):
+                raise ValueError(f"{option}: category must be school or hospital: {category!r}")
+            values[category][field] = value
+    for entry in args.service_unit or []:
+        category, separator, unit = entry.partition("=")
+        if not separator or category not in ("school", "hospital") or not unit.strip() or "capacity_unit" in values[category]:
+            raise ValueError("--service-unit requires unique school=UNIT or hospital=UNIT values")
+        values[category]["capacity_unit"] = unit
+    return values
 
 
 def main(argv=None):
@@ -44,6 +70,13 @@ def main(argv=None):
     template = commands.add_parser("failures-template", help="export fingerprint-bound physical-link probabilities")
     _network_flags(template)
     analysis.add_argument("--no-figures", action="store_true")
+    analysis.add_argument("--population-importance", type=float, help="population-share coefficient in combined node importance (default: 1; requires --facilities)")
+    analysis.add_argument("--facilities", type=Path, help="explicit WGS84 school/hospital CSV")
+    analysis.add_argument("--service-mode", choices=("weights-only", "2sfca"), help="default: weights-only; 2sfca requires capacities and catchments")
+    analysis.add_argument("--service-importance", action="append", metavar="TYPE=WEIGHT", help="nonnegative school/hospital importance; default 1 each")
+    analysis.add_argument("--service-catchment-minutes", action="append", metavar="TYPE=MINUTES", help="explicit inclusive positive time threshold for each supplied 2sfca category")
+    analysis.add_argument("--service-unit", action="append", metavar="TYPE=UNIT", help="optional expected capacity unit per category")
+    analysis.add_argument("--facility-snap-max-m", type=float, help="inclusive facility snap limit in metres (default: 500)")
     analysis.add_argument("--failure-probs", type=Path)
     analysis.add_argument("--p0", type=float, default=.01, help="per-km closure probability during one event (default: .01)")
     analysis.add_argument("--require-complete-failures", action="store_true")
@@ -66,7 +99,8 @@ def main(argv=None):
     args = parser.parse_args(argv)
     try:
         config = directory_config(args.input_dir, boundary=args.boundary, network_type=args.network_type,
-            consolidation_m=args.consolidation_m, consolidate=not args.no_consolidation, snap_max_m=args.snap_max_m)
+            consolidation_m=args.consolidation_m, consolidate=not args.no_consolidation, snap_max_m=args.snap_max_m,
+            allow_missing_population=args.command == "run" and args.facilities is not None)
         if args.command == "failures-template":
             from .failure_probabilities import export_edge_template
             from .network import load_and_clean
@@ -102,8 +136,12 @@ def main(argv=None):
                 travel_time={"samples": args.travel_time_samples, "tau": args.time_threshold,
                     "time_model": args.time_model.replace("-", "_"), "time_attribute": args.time_attribute,
                     "highway_speeds_kph": _assignments(args.speed, "--speed") if args.speed else None},
-                accessibility={"half_distance_km": args.half_distance_km})
-            run(RunConfig.model_validate(values), overwrite=args.overwrite)
+                accessibility={"half_distance_km": args.half_distance_km}, services=_service_settings(args))
+            validated = RunConfig.model_validate(values)
+            if validated.services is not None:
+                from .service_inputs import load_facility_records
+                load_facility_records(validated.services)
+            run(validated, overwrite=args.overwrite)
     except (ValueError, OSError, RuntimeError, ParseError) as exc:
         print(f"georesilience: {exc}", file=sys.stderr, flush=True)
         return 2

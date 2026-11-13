@@ -1,0 +1,4 @@
+facility_id,service_type,longitude,latitude,capacity,capacity_unit,capacity_source,name,capacity_year,notes
+001,school,81.000470202915,17.187071420213,120,student_seats,synthetic software fixture,Synthetic school 001,2026,Not observed study data
+002,school,81.002350991770,17.185263530444,80,student_seats,synthetic software fixture,Synthetic school 002,2026,Not observed study data
+003,hospital,81.000470202915,17.187071420213,12,staffed_beds,synthetic software fixture,Synthetic hospital 003,2026,Not observed study data

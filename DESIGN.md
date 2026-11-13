@@ -4,7 +4,7 @@ GeoResilience is a local road-resilience CLI. Its inputs are one supported road 
 
 ## Inputs and preparation
 
-`georesilience run INPUT_DIR --out OUTPUT_DIR` discovers exactly one `.osm`, `.osm.xml` or `.graphml` and exactly one `.tif` or `.tiff`. Ambiguous/missing inputs fail with candidate paths. OSM PBF is unsupported. XML filtering defaults to `drive`; GraphML is used as supplied and the manifest must distinguish a requested setting from an applied filter.
+`georesilience run INPUT_DIR --out OUTPUT_DIR` discovers exactly one `.osm`, `.osm.xml` or `.graphml` and exactly one `.tif` or `.tiff` (optional only with the service-enabled uniform-demand fallback below). Ambiguous/missing inputs fail with candidate paths. OSM PBF is unsupported. XML filtering defaults to `drive`; GraphML is used as supplied and the manifest must distinguish a requested setting from an applied filter.
 
 Cleaning simplifies road geometry, projects to metre coordinates, optionally consolidates intersections (15 m default), and retains the largest directed strongly connected component (ties use canonical node IDs). Record before/after counts and length. Use the retained graph for every metric and for population allocation.
 
@@ -63,8 +63,75 @@ Write exactly `network.gpkg`, `summary.json`, `attack_curve.csv`, `report.txt` a
 
 The manifest records checksums of every consumed file, resolved CLI values/defaults, units, software versions, seed, cleaning, graph directedness, boundary method/bounds, probability/speed assumptions and candidate counts. Reproduction requires identical consumed inputs and recorded options/software. Verify hashes and template fingerprints rather than inferring compatibility from filenames.
 
-Public metrics are limited to the retained measures above. Supporting IDs, population counts, probabilities, coverage and provenance are data fields.
+Public metrics without service input are limited to the retained measures above. Supporting IDs, population counts, probabilities, coverage and provenance are data fields.
+
+## Optional critical-service contract
+
+An explicit `--facilities PATH` enables a third service view. No facility file is
+discovered implicitly. `--service-mode weights-only` is the default; `2sfca`
+requires explicit positive `--service-catchment-minutes TYPE=MINUTES` for each
+category present in the CSV, independently of its importance. Internal time units
+are seconds. Importance defaults to one for each type, is finite/nonnegative,
+and at least one type must have positive importance. The separate inclusive
+`--facility-snap-max-m` defaults to 500 metres. Per-type expected units may be
+declared with `--service-unit TYPE=UNIT`. These settings round-trip in RunConfig.
+
+CSV location columns are `facility_id,service_type,longitude,latitude`. IDs are
+unique nonblank strings (leading zeros preserved), types are `school`/`hospital`,
+and coordinates are finite WGS84 lon/lat. Optional descriptive columns are
+`name,capacity_year,notes`. In 2SFCA mode every row must also provide finite
+nonnegative `capacity`, nonblank `capacity_unit` and `capacity_source`, including
+known zero supply. Suggested units are `student_seats` and `staffed_beds`; users
+may explicitly supply other units, consistent within each category. Mixed units
+within a type, duplicate/blank headers and IDs, malformed rows and invalid
+numbers fail with row diagnostics. Weights-only allows unknown capacity as null;
+it never substitutes zero or invents capacity. Known numeric capacity is always
+validated and incompatible declared units always fail.
+
+Count importance is `w_i=sum_c alpha_c*n_i,c`, independent of capacity. Known
+zero-capacity institutions still count toward importance. Service destination
+metrics use fixed original `P_i*w_j`, including co-location; zero original mass
+is unavailable. Seats and beds are never added. Demand for both categories is
+allocated total population; school demand is an all-resident proxy. Retained
+network/crop boundaries do not correct missing neighbouring demand or supply.
+Attachment occurs after cleaning with stable node-ID ties, retaining every
+facility and its provenance; out-of-range points fail rather than disappear.
+
+Standard 2SFCA uses directed resident-to-facility static-time catchments,
+inclusive thresholds and no decay: `D_j=sum_i P_i*1[t_ij<=T_c]`, `R_j=S_j/D_j`,
+`A_i,c=sum_j R_j*1[t_ij<=T_c]`. Facilities with zero demand have null ratios and
+contribute zero, with their supply reported separately. Absent types, zero total
+population and missing time costs are unavailable with reasons. Supplied known
+zero supply yields zero access for positive population. Raw indices are capacity
+per resident (also displayed per 1,000); they are neither clipped nor combined
+across units. Custom dynamic time providers are unsupported for enabled 2SFCA.
+The method extends Luo and Wang (2003), equations (3)/(4), to supplied school and
+hospital capacity; full scenario 2SFCA and age-specific demand are deferred.
 
 ## Verification
 
 Use tiny deterministic XML/GraphML/raster fixtures and exact formula checks for directed closures, bridges, parallel roads, screened omissions, removed-node pairs, zero-population nodes and all-zero population. Test template round trips and mismatches, time availability, seeded worker independence, output schema, safe overwrite and an offline end-to-end run. The complete test suite forbids network access. Small deterministic checked-in inputs live under `tests/fixtures/tiny`; variant fixtures are generated under test temporary directories.
+
+
+### Population contribution to node importance (user refinement)
+
+Service-enabled runs also publish combined node importance:
+`I_i = population_importance * P_i/sum(P) + w_i/sum(w)`, where `w_i` is the
+category-weighted facility count above. Each zero-total component contributes
+zero. `--population-importance` is finite/nonnegative and defaults to 1; zero
+removes the population component. Normalize the components before addition so
+resident counts do not overwhelm institutional points merely through unit scale.
+Export `node_importance`, `importance_population_component` and
+`importance_service_component` separately. The attack adds the original combined
+importance share in the same selected SCC and its raw AUC. Count service weights,
+capacity-based 2SFCA and population-origin demand remain separately interpretable.
+
+For service-enabled runs a directory may omit the population raster; then each
+retained node receives one uniform demand unit, making the population importance
+component uniform. This is an explicit no-data assumption, never inferred resident
+counts. A supplied all-zero raster remains zero population, with undefined 2SFCA;
+it never triggers the fallback. More than one raster is still an input error.
+No-service CLI runs retain the existing requirement for exactly one raster.
+Record the demand basis and units in JSON/text/GIS/manifest, using supply per
+uniform node demand unit for fallback 2SFCA. Input hashes and replay include only
+files actually supplied and consumed.

@@ -8,7 +8,6 @@ from itertools import islice
 from pathlib import Path
 
 import numpy as np
-from scipy.sparse import csr_matrix
 from scipy.sparse.csgraph import connected_components, dijkstra
 
 from .config import TravelTimeConfig
@@ -16,7 +15,9 @@ from .failure_probabilities import probabilities_at_p0
 from .metrics import POPULATION_REASON, PairUniverse
 from .od import OD_COLUMNS, ODInputs
 from .removal import ActiveEdgeGraph
-from .time_models import TimeContext, prepare_time_model
+from .service_metrics import ServiceUniverse
+from .time_models import prepare_time_model
+from .time_routing import TimeTopology
 
 CONNECTIVITY = "fraction of original distinct ordered node pairs mutually reachable in the same directed SCC"
 TRAVEL_TIME = "fraction of original distinct ordered node pairs with finite event travel time <= (1 + threshold) times intact travel time"
@@ -62,40 +63,6 @@ def _connectivity(matrix, universe):
     return (structural, min(1., max(0., weighted))), labels
 
 
-class _TimeTopology:
-    def __init__(self, graph, links, prepared):
-        index = {node: i for i, node in enumerate(graph)}
-        arcs = sorted((index[u], index[v], position, (u, v, key))
-            for position, row in enumerate(links) for u, v, key in row["_edges"])
-        self.rows = np.array([a[0] for a in arcs], dtype=int)
-        self.cols = np.array([a[1] for a in arcs], dtype=int)
-        self.positions = np.array([a[2] for a in arcs], dtype=int)
-        self.edges = [a[3] for a in arcs]
-        self.ids = [row["link_id"] for row in links]
-        self.n, self.prepared = len(graph), prepared
-        self.baseline_values = self.values(prepared.costs(TimeContext()))
-
-    def values(self, mapping):
-        try:
-            values = np.array([float(mapping[edge]) for edge in self.edges])
-        except (KeyError, TypeError, ValueError, OverflowError) as exc:
-            raise ValueError("travel_time: provider must supply numeric seconds for every directed non-loop edge") from exc
-        if not np.isfinite(values).all() or (values <= 0).any():
-            raise ValueError("travel_time: edge seconds must be finite and strictly positive")
-        return values
-
-    def csr(self, up, sample_index=None):
-        values = self.baseline_values
-        if sample_index is not None and self.prepared.scenario_times is not None:
-            closed = frozenset(link for link, state in zip(self.ids, up) if not state)
-            values = self.values(self.prepared.costs(TimeContext(sample_index, closed)))
-        keep = up[self.positions]
-        rows, cols, costs = self.rows[keep], self.cols[keep], values[keep]
-        if len(rows):
-            starts = np.flatnonzero(np.r_[True, (rows[1:] != rows[:-1]) | (cols[1:] != cols[:-1])])
-            rows, cols, costs = rows[starts], cols[starts], np.minimum.reduceat(costs, starts)
-        return csr_matrix((costs, (rows, cols)), shape=(self.n, self.n))
-
 
 def _time_success(baseline, damaged, threshold):
     with np.errstate(over="ignore", invalid="ignore"):
@@ -105,7 +72,8 @@ def _time_success(baseline, damaged, threshold):
 
 def compute_reliability(graph, links, population, user_probabilities, *, p0=.01, p0_sweep=None,
         connectivity_samples=10000, travel_time_samples=1000, time_threshold=.5, seed=42,
-        n_jobs=1, budget_bytes=2**26, time_config=None, time_model=None, od_inputs=None, uniform_samples=None):
+        n_jobs=1, budget_bytes=2**26, time_config=None, time_model=None, od_inputs=None, uniform_samples=None,
+        service_weights=None, prepared_time=None):
     """Use common per-link uniforms across weighting views, sample counts and p0 scenarios.
 
     Each sample has its own SeedSequence([seed, index]). Ordered reductions make
@@ -122,6 +90,7 @@ def compute_reliability(graph, links, population, user_probabilities, *, p0=.01,
     universe = PairUniverse(population)
     if not universe.n or universe.n != len(graph):
         raise ValueError("population must match a nonempty original graph")
+    services = ServiceUniverse(population, service_weights) if service_weights is not None else None
     active = sorted((row for row in links if not row["is_self_loop"]), key=lambda row: row["link_id"])
     if len({row["link_id"] for row in active}) != len(active):
         raise ValueError("physical-link IDs must be unique")
@@ -146,11 +115,11 @@ def compute_reliability(graph, links, population, user_probabilities, *, p0=.01,
     row_bytes = max(1, universe.n) * 8 * 8
     if budget_bytes < row_bytes:
         raise ValueError("memory budget too small for one travel-time row")
-    prepared = prepare_time_model(graph, time_config or TravelTimeConfig(), time_model)
+    prepared = prepared_time if prepared_time is not None else prepare_time_model(graph, time_config or TravelTimeConfig(), time_model)
     time_reason = None if prepared.summary["status"] == "computed" else prepared.summary["status"]
     evaluated_samples = max(connectivity_samples, travel_time_samples if not time_reason else 0)
     topology = ActiveEdgeGraph(graph, active, directed=True)
-    times = None if time_reason else _TimeTopology(graph, active, prepared)
+    times = None if time_reason else TimeTopology(graph, active, prepared)
     baseline_matrix = times.csr(np.ones(len(active), dtype=bool)) if times else None
     cache_bytes = universe.n ** 2 * 8
     cache = dijkstra(baseline_matrix, directed=True) if times and cache_bytes + row_bytes <= budget_bytes // 2 else None
@@ -170,7 +139,14 @@ def compute_reliability(graph, links, population, user_probabilities, *, p0=.01,
         for name, probability in probabilities.items():
             up = (uniforms >= probability) & (probability < 1)
             closed = [row["link_id"] for row, state in zip(active, up) if not state]
-            conn, labels = _connectivity(topology.csr(removed_links=closed), universe)
+            event_matrix = topology.csr(removed_links=closed)
+            conn, labels = _connectivity(event_matrix, universe)
+            service_conn, service_time = np.zeros(universe.n), np.zeros(universe.n)
+            if services is not None and services.reason is None and index < connectivity_samples:
+                for start in range(0, universe.n, chunk_rows):
+                    origins = np.arange(start, min(universe.n, start + chunk_rows))
+                    reachable = np.isfinite(dijkstra(event_matrix, directed=True, indices=origins))
+                    service_conn[origins] = np.sum(reachable * services.destinations, axis=1)
             mutual = np.array([labels[row["_origin"]] == labels[row["_dest"]] for row in pairs], dtype=float)
             travel, od_time = np.zeros((universe.n, 2)), np.zeros(len(pairs))
             if times and index < travel_time_samples:
@@ -183,30 +159,37 @@ def compute_reliability(graph, links, population, user_probabilities, *, p0=.01,
                     for j, row in enumerate(pairs):
                         if start <= row["_origin"] < start + len(origins):
                             od_time[j] = success[row["_origin"] - start, row["_dest"]]
+                    if services is not None and services.reason is None:
+                        service_time[origins] = np.sum(success * services.destinations, axis=1)
                     success[np.arange(len(origins)), origins] = False
                     travel[origins, 0] = success.sum(axis=1)
                     # Row-wise sums give identical rounding for every chunk size.
                     travel[origins, 1] = np.sum(success * universe.weights, axis=1)
             tt = (float(travel[:, 0].sum() / universe.denominator) if universe.denominator else 0.,
                   float(universe.weights @ travel[:, 1] / universe.denominator_pop) if universe.denominator_pop else 0.)
-            output[name] = (conn, tt, mutual, od_time)
+            service_values = ((float(services.origins @ service_conn), float(services.origins @ service_time))
+                if services is not None else (0., 0.))
+            output[name] = (conn, tt, mutual, od_time, service_values)
         return output
 
     totals = {name: np.zeros((2, 2)) for name in scenarios}
     od_totals = np.zeros((2, len(pairs)))
+    service_totals = {name: np.zeros(2) for name in scenarios}
     indices = iter(range(evaluated_samples))
     executor = ThreadPoolExecutor(max_workers=workers) if workers > 1 else None
     try:
         while batch := list(islice(indices, workers * 2)):
             results = executor.map(sample, batch) if executor else map(sample, batch)
             for index, result in zip(batch, results):
-                for name, (conn, tt, mutual, od_time) in result.items():
+                for name, (conn, tt, mutual, od_time, service_values) in result.items():
                     if index < connectivity_samples:
                         totals[name][0] += conn
+                        service_totals[name][0] += service_values[0]
                         if name == "primary":
                             od_totals[0] += mutual
                     if index < travel_time_samples:
                         totals[name][1] += tt
+                        service_totals[name][1] += service_values[1]
                         if name == "primary":
                             od_totals[1] += od_time
     finally:
@@ -221,6 +204,13 @@ def compute_reliability(graph, links, population, user_probabilities, *, p0=.01,
             result[group] = {
                 "connectivity_reliability": _score(total[0, column], connectivity_samples, CONNECTIVITY, reason),
                 "travel_time_reliability": _score(total[1, column], travel_time_samples, TRAVEL_TIME, time_reason or reason)}
+        if services is not None:
+            result['service_weighted'] = {
+                'directed_reachability_reliability': _score(service_totals[name][0], connectivity_samples,
+                    'expected original P_i*w_j directed resident-to-service reachable share, including co-location', services.reason),
+                'travel_time_reliability': _score(service_totals[name][1], travel_time_samples,
+                    'expected original P_i*w_j share with event seconds <= (1+threshold)*intact seconds, including co-location',
+                    time_reason or services.reason)}
         results[name] = result
     summary = {**results["primary"], "scenarios": results, "time_threshold": time_threshold,
         "speed_source": dict(prepared.summary), "time_model": dict(prepared.summary), "seed": seed,

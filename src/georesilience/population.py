@@ -133,9 +133,16 @@ def allocate_population(graph, boundary, path, snap_max_m):
                      "unallocated_pct": 100 * unallocated / total if total else 0.0}
 
 
-def prepare_population(graph, boundary, config):
+def prepare_population(graph, boundary, config, *, uniform_if_missing=False):
     if config.worldpop is None:
-        return None
+        if not uniform_if_missing:
+            return None
+        n = len(graph)
+        return PopulationResult(np.ones(n),
+            {"total": float(n), "allocated": float(n), "unallocated": 0., "unallocated_pct": 0.,
+             "units": "uniform node demand units", "basis": "uniform_node_demand", "snap_max_m": None},
+            {"source": "uniform_node_demand", "units": "one demand unit per retained node",
+             "assumption": "population data absent; equal origin demand, not estimated resident counts"})
     path = Path(config.worldpop).expanduser().resolve()
     if not path.is_file():
         raise ValueError(f"population GeoTIFF does not exist: {path}")
