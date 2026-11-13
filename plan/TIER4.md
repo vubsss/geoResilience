@@ -1,4 +1,4 @@
-# Tier 4: simulated traffic, congested edge costs and disruption
+# Tier 4: simulated traffic, congested edge costs and disruptio
 
 Planning baseline: 4 November 2026; framework scope clarified 5 November 2026.
 Status: initial assignment and population-derived demand/capacity are integrated with the current CLI; calibration and CTS class mapping remain planned.
