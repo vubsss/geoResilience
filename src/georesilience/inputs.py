@@ -8,7 +8,7 @@ from pathlib import Path
 class InputFiles:
     directory: Path
     road: Path
-    population: Path
+    population: Path | None
     boundary: Path | None
 
     @property
@@ -16,7 +16,7 @@ class InputFiles:
         return "graphml" if self.road.suffix.lower() == ".graphml" else "osm_xml"
 
 
-def resolve_inputs(directory, boundary=None):
+def resolve_inputs(directory, boundary=None, *, allow_missing_population=False):
     directory = Path(directory).expanduser().resolve()
     if not directory.is_dir():
         raise ValueError(f"input directory does not exist: {directory}")
@@ -33,8 +33,8 @@ def resolve_inputs(directory, boundary=None):
 
     road = exactly_one("road file (.osm, .osm.xml, .graphml)", [
         path for path in files if path.name.lower().endswith((".osm", ".osm.xml", ".graphml"))])
-    population = exactly_one("population GeoTIFF (.tif, .tiff)", [
-        path for path in files if path.suffix.lower() in {".tif", ".tiff"}])
+    rasters = [path for path in files if path.suffix.lower() in {".tif", ".tiff"}]
+    population = None if allow_missing_population and not rasters else exactly_one("population GeoTIFF (.tif, .tiff)", rasters)
     if boundary is not None:
         boundary = Path(boundary).expanduser().resolve()
         if not boundary.is_file() or boundary.suffix.lower() not in {".geojson", ".gpkg"}:
@@ -48,12 +48,12 @@ def resolve_inputs(directory, boundary=None):
 
 
 def directory_config(directory, *, boundary=None, network_type="drive", consolidation_m=15,
-                     consolidate=True, snap_max_m=500):
+                     consolidate=True, snap_max_m=500, allow_missing_population=False):
     from .config import RunConfig
-    files = resolve_inputs(directory, boundary)
+    files = resolve_inputs(directory, boundary, allow_missing_population=allow_missing_population)
     if files.source == "osm_xml" and network_type not in {"drive", "all"}:
         raise ValueError("local XML supports network-type drive or all (as supplied)")
     return RunConfig(input={"source": files.source, "path": files.road,
                            "directory": files.directory, "boundary": files.boundary},
         network={"type": network_type}, cleaning={"consolidate": consolidate, "tolerance_m": consolidation_m},
-        population={"worldpop": str(files.population), "snap_max_m": snap_max_m})
+        population={"worldpop": str(files.population) if files.population is not None else None, "snap_max_m": snap_max_m})

@@ -3,6 +3,7 @@ __pycache__/
 *.egg-info/
 .pytest_cache/
 .venv/
+.venv-closure/
 build/
 dist/
 cache/
@@ -31,3 +32,7 @@ Thumbs.db
 Desktop.ini
 CLEANUP_PLAN.md
 CLEANUP_PROGRESS.md
+CRITICAL_NODES_2SFCA_PLAN.md
+CRITICAL_NODES_2SFCA_TICKETS.md
+CRITICAL_NODES_ACCEPTANCE.md
+CRITICAL_NODES_PROGRESS.md

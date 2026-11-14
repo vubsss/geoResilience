@@ -28,6 +28,7 @@ class CleaningConfig(StrictModel):
 
 
 class AnalysisConfig(StrictModel):
+    default_view: Literal["population_weighted", "unweighted"] = "population_weighted"
     seed: int = Field(default=42, ge=0)
     n_jobs: Annotated[int, Field(ge=1)] | Literal["auto"] = "auto"
     max_memory_gb: Annotated[float, Field(gt=0, allow_inf_nan=False)] | Literal["auto"] = "auto"
@@ -85,6 +86,7 @@ class TravelTimeConfig(StrictModel):
 
 class TrafficConfig(StrictModel):
     enabled: bool = False
+    reassign_failures: bool = True
     source: Literal["assignment", "edge_times_csv"] = "assignment"
     period: str = "illustrative_one_hour"
     duration_h: float = Field(default=1.0, gt=0, allow_inf_nan=False)
@@ -141,6 +143,8 @@ class TrafficConfig(StrictModel):
 
 
 class AccessibilityConfig(StrictModel):
+    cost: Literal["auto", "distance", "time"] = "auto"
+    half_time_minutes: float = Field(default=6, gt=0, allow_inf_nan=False)
     half_distance_km: float = Field(default=2, gt=0, allow_inf_nan=False)
     cutoff_factor: float = Field(default=5, gt=0, allow_inf_nan=False)
 
@@ -155,8 +159,69 @@ class AccessibilityConfig(StrictModel):
 
 
 class PopulationConfig(StrictModel):
-    worldpop: str | None = None
+    worldpop: str | Path | None = None
+    node_counts: Path | None = None
     snap_max_m: float = Field(default=500, ge=0, allow_inf_nan=False)
+
+    @model_validator(mode="after")
+    def one_source(self):
+        if self.worldpop is not None and self.node_counts is not None:
+            raise ValueError("choose population.worldpop or population.node_counts, not both")
+        return self
+
+
+class CompositeWeights(StrictModel):
+    bridge: float = Field(default=.15, ge=0, allow_inf_nan=False)
+    detour: float = Field(default=.15, ge=0, allow_inf_nan=False)
+    attack: float = Field(default=.25, ge=0, allow_inf_nan=False)
+    accessibility: float = Field(default=.15, ge=0, allow_inf_nan=False)
+    travel_time_reliability: float = Field(default=.15, ge=0, allow_inf_nan=False)
+    connectivity_reliability: float = Field(default=.15, ge=0, allow_inf_nan=False)
+
+    @model_validator(mode="after")
+    def sum_to_one(self):
+        if not math.isclose(math.fsum(self.model_dump().values()), 1., abs_tol=1e-9, rel_tol=0):
+            raise ValueError("composite weights must sum to 1 (use fractions, not percentages)")
+        return self
+
+
+class CompositeConfig(StrictModel):
+    weights: CompositeWeights = Field(default_factory=CompositeWeights)
+
+
+class ServiceCategoryConfig(StrictModel):
+    importance: float = Field(default=1, ge=0, allow_inf_nan=False)
+    catchment_minutes: float | None = Field(default=None, gt=0, allow_inf_nan=False)
+    capacity_unit: str | None = Field(default=None, min_length=1)
+
+    @model_validator(mode="after")
+    def validate_category(self):
+        if self.capacity_unit is not None:
+            self.capacity_unit = self.capacity_unit.strip()
+            if not self.capacity_unit:
+                raise ValueError("capacity_unit must be nonempty")
+        if self.catchment_minutes is not None and not math.isfinite(self.catchment_seconds):
+            raise ValueError("catchment in seconds must be finite")
+        return self
+
+    @property
+    def catchment_seconds(self):
+        return None if self.catchment_minutes is None else 60 * self.catchment_minutes
+
+
+class ServicesConfig(StrictModel):
+    facilities_csv: Path
+    mode: Literal["weights_only", "sfca"] = "weights_only"
+    population_importance: float = Field(default=1, ge=0, allow_inf_nan=False)
+    snap_max_m: float = Field(default=500, ge=0, allow_inf_nan=False)
+    school: ServiceCategoryConfig = Field(default_factory=ServiceCategoryConfig)
+    hospital: ServiceCategoryConfig = Field(default_factory=ServiceCategoryConfig)
+
+    @model_validator(mode="after")
+    def validate_services(self):
+        if self.school.importance == self.hospital.importance == 0:
+            raise ValueError("services require at least one positive category importance")
+        return self
 
 
 class RunConfig(StrictModel):
@@ -164,6 +229,7 @@ class RunConfig(StrictModel):
     network: NetworkConfig = Field(default_factory=NetworkConfig)
     cleaning: CleaningConfig = Field(default_factory=CleaningConfig)
     analysis: AnalysisConfig = Field(default_factory=AnalysisConfig)
+    composite: CompositeConfig = Field(default_factory=CompositeConfig)
     criticality: CriticalityConfig = Field(default_factory=CriticalityConfig)
     robustness: RobustnessConfig = Field(default_factory=RobustnessConfig)
     reliability: ReliabilityConfig = Field(default_factory=ReliabilityConfig)
@@ -171,4 +237,5 @@ class RunConfig(StrictModel):
     traffic: TrafficConfig = Field(default_factory=TrafficConfig)
     accessibility: AccessibilityConfig = Field(default_factory=AccessibilityConfig)
     population: PopulationConfig = Field(default_factory=PopulationConfig)
+    services: ServicesConfig | None = None
     output: OutputConfig = Field(default_factory=OutputConfig)

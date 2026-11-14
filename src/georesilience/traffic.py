@@ -22,6 +22,38 @@ class TrafficResult:
     closure_rows: list[dict] | None = None
 
 
+def canonical_traffic_graph(graph, speeds=None):
+    """Resolve simplified mixed tags conservatively without changing road identity."""
+    from .time_models import _parsed_speed
+    result = graph.copy()
+    changed = 0
+    for _, _, _, data in result.edges(keys=True, data=True):
+        for field in ('lanes', 'width', 'maxspeed', 'highway'):
+            raw = data.get(field)
+            if not isinstance(raw, (list, tuple, set)):
+                continue
+            changed += 1
+            if field == 'highway':
+                value = min(map(str, raw), key=lambda tag: ((speeds or {}).get(tag, 20), tag)) if raw else 'unclassified'
+            elif field == 'maxspeed':
+                usable = [v for item in raw if (v := _parsed_speed(item)) is not None]
+                value = str(min(usable)) if usable else None
+            else:
+                usable = []
+                for item in raw:
+                    v = _tag_number(item)
+                    if v is not None and math.isfinite(v) and v > 0:
+                        if field == 'width' and any(unit in str(item).lower() for unit in ('ft', 'feet', "'")):
+                            v *= .3048
+                        usable.append(v)
+                value = min(usable) if usable else None
+            if value is None:
+                data.pop(field, None)
+            else:
+                data[field] = value
+    return result, changed
+
+
 def _arcs(graph):
     return [(u, v, key, data) for u, v, key, data in graph.edges(keys=True, data=True) if u != v]
 
@@ -38,7 +70,7 @@ def _edge_lookup(graph):
 
 
 def _read_csv(path, required):
-    with Path(path).open(newline="") as stream:
+    with Path(path).open(newline="", encoding="utf-8-sig") as stream:
         reader = csv.DictReader(stream)
         if reader.fieldnames is None or not set(required).issubset(reader.fieldnames):
             raise ValueError(f"traffic: {path} needs columns {', '.join(required)}")
@@ -162,14 +194,17 @@ def population_gravity_od(graph, free_flow_seconds, population, trip_rate_per_pe
             raise ValueError("traffic: population zoning needs finite node x,y coordinates") from exc
         if not all(math.isfinite(value) for point in coordinates.values() for value in point):
             raise ValueError("traffic: population zoning needs finite node x,y coordinates")
-        side = math.ceil(math.sqrt(zone_limit))
+        columns = max(1, math.floor(math.sqrt(zone_limit)))
+        rows = max(1, zone_limit // columns)
         xs, ys = [point[0] for point in coordinates.values()], [point[1] for point in coordinates.values()]
         xmin, xmax, ymin, ymax = min(xs), max(xs), min(ys), max(ys)
+        if xmax - xmin > ymax - ymin and columns < rows:
+            columns, rows = rows, columns
         groups = {}
         for node, mass in active:
             x, y = coordinates[node]
-            ix = min(side - 1, int((x - xmin) / (xmax - xmin) * side)) if xmax > xmin else 0
-            iy = min(side - 1, int((y - ymin) / (ymax - ymin) * side)) if ymax > ymin else 0
+            ix = min(columns - 1, int((x - xmin) / (xmax - xmin) * columns)) if xmax > xmin else 0
+            iy = min(rows - 1, int((y - ymin) / (ymax - ymin) * rows)) if ymax > ymin else 0
             groups.setdefault((ix, iy), []).append((node, mass))
         zoned = []
         for members in groups.values():
@@ -469,14 +504,14 @@ def write_traffic_csv(result, path):
     fields = ["u", "v", "key", "free_flow_time_s", "capacity_pcu_h", "assigned_volume_pcu_h",
               "vc_ratio", "congested_time_s", "delay_s", "width_m", "lanes_tag",
               "effective_lanes", "capacity_source"]
-    with Path(path).open("w", newline="") as stream:
+    with Path(path).open("w", newline="", encoding="utf-8") as stream:
         writer = csv.DictWriter(stream, fieldnames=fields)
         writer.writeheader()
         writer.writerows(result.rows)
 
 
 def write_traffic_od_csv(result, path):
-    with Path(path).open("w", newline="") as stream:
+    with Path(path).open("w", newline="", encoding="utf-8") as stream:
         writer = csv.DictWriter(stream, fieldnames=["origin", "destination", "demand_pcu_h",
                                                      "free_flow_time_s", "congested_time_s", "delay_s"])
         writer.writeheader()
@@ -486,7 +521,7 @@ def write_traffic_od_csv(result, path):
 def write_traffic_closures_csv(result, path):
     fields = ["link_id", "osm_way_ids", "newly_unreachable_demand_pcu_h",
               "baseline_tstt_pcu_hours", "scenario_tstt_pcu_hours", "delta_tstt_pcu_hours", "status"]
-    with Path(path).open("w", newline="") as stream:
+    with Path(path).open("w", newline="", encoding="utf-8") as stream:
         writer = csv.DictWriter(stream, fieldnames=fields)
         writer.writeheader()
         writer.writerows(result.closure_rows or [])

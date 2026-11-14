@@ -1,0 +1,3 @@
+# SFINCS v2.4.0 Galibier CPU release; reproducible multi-platform image digest.
+# Original tag: deltares/sfincs-cpu:sfincs-v2.4.0-Galibier-Release
+deltares/sfincs-cpu@sha256:4301bffc74f3cb3f334be5d21aa75dfe5742a16c9838942cdfc2f870859fb404

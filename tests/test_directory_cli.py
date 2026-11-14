@@ -16,7 +16,7 @@ from rasterio.transform import from_origin
 
 from tests.helpers.small_inputs import cell_graph, raster_fixture
 
-CORE_FILES = {"network.gpkg", "summary.json", "attack_curve.csv", "report.txt", "run_manifest.json"}
+CORE_FILES = {"network.gpkg", "summary.json", "attack_curve.csv", "report.txt", "run_manifest.json", "composite.csv"}
 STRUCTURAL_METRICS = {"bridge_redundancy", "detour_redundancy", "detour_no_alternative_share",
     "targeted_attack_robustness", "hansen_accessibility", "connectivity_reliability", "travel_time_reliability"}
 WEIGHTED_METRICS = {"targeted_attack_robustness", "hansen_accessibility",
@@ -29,7 +29,7 @@ EDGE_METRICS = {"edge_betweenness", "is_bridge", "detour_ratio", "detour_none", 
     "efficiency_drop_pop", "accessibility_drop", "accessibility_drop_pop", "disconnected_pair_fraction",
     "disconnected_pair_fraction_pop", "evaluated", "null_reasons"}
 REMOVED_FIELDS = {"closeness", "straightness", "degree_centrality", "classification", "scorecard",
-    "zones", "composite", "vuln", "vuln_k2", "rel_importance", "p_in_main", "p_tt_ok", "crit_rank"}
+    "zones", "vuln", "vuln_k2", "rel_importance", "p_in_main", "p_tt_ok", "crit_rank"}
 
 
 def invoke(arguments):
@@ -88,6 +88,9 @@ def assert_public_summary(summary):
             assert metric["definition"]
             if metric["value"] is None:
                 assert metric["reason"]
+    assert summary['default_view'] == 'population_weighted'
+    assert summary['headline'] == summary['composite']['population_weighted']
+    assert summary['headline']['weights']['attack'] == .25
     assert not REMOVED_FIELDS & summary.keys()
     json.dumps(summary, allow_nan=False)
 
@@ -308,3 +311,47 @@ def test_manifest_replay_reproduces_metrics_and_rejects_changed_consumed_file(tm
     with pytest.raises(ValueError, match="(?i)hash|checksum|changed|fingerprint"):
         replay_manifest(manifest, failed)
     assert not failed.exists()
+
+
+@pytest.mark.parametrize('options,match', [
+    (['--service-mode', '2sfca'], 'require --facilities'),
+    (['--service-importance', 'school=1'], 'require --facilities'),
+    (['--facilities', 'missing.csv'], 'No such file'),
+    (['--service-importance', 'clinic=1'], 'category'),
+    (['--service-importance', 'school=nan'], 'finite'),
+    (['--service-importance', 'school=0', '--service-importance', 'hospital=0'], 'positive category'),
+    (['--service-importance', 'school=1', '--service-importance', 'school=2'], 'unique'),
+    (['--service-catchment-minutes', 'school=0'], 'greater than 0'),
+    (['--facility-snap-max-m', '-1'], 'greater than or equal'),
+    (['--service-unit', 'school='], 'requires unique'),
+    (['--service-mode', '2sfca'], 'catchment_minutes'),
+])
+def test_service_cli_contract_errors_before_output(tmp_path, capsys, options, match):
+    from tests.test_service_inputs import facility_csv
+    directory, _, _, _ = make_input(tmp_path)
+    path = facility_csv(tmp_path)
+    # Explicit no-file cases remain no-file; the rest exercise a valid local CSV.
+    prefix = [] if match in ('require --facilities', 'No such file') else ['--facilities', path]
+    output = tmp_path / 'result'
+    assert invoke(run_args(directory, output, *prefix, *options)) == 2
+    assert match in capsys.readouterr().err
+    assert not output.exists()
+
+
+def test_service_cli_settings_reach_run_and_default_remains_disabled(tmp_path, monkeypatch):
+    from tests.test_service_inputs import facility_csv
+    from georesilience import pipeline
+    directory, _, _, _ = make_input(tmp_path)
+    path = facility_csv(tmp_path)
+    captured = []
+    monkeypatch.setattr(pipeline, 'run', lambda config, **kwargs: captured.append(config))
+    assert invoke(run_args(directory, tmp_path / 'none')) == 0
+    assert captured[-1].services is None
+    assert invoke(run_args(directory, tmp_path / 'with', '--facilities', path, '--service-mode', '2sfca',
+        '--service-importance', 'school=2', '--service-catchment-minutes', 'school=12',
+        '--service-unit', 'school=student_seats', '--facility-snap-max-m', '0')) == 0
+    settings = captured[-1].services
+    assert settings.school.importance == 2
+    assert settings.school.catchment_seconds == 720
+    assert settings.snap_max_m == 0
+    assert settings.mode == 'sfca'
