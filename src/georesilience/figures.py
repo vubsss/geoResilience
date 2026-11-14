@@ -5,7 +5,7 @@ from pathlib import Path
 import numpy as np
 
 FIGURE_FILENAMES = ("node_betweenness.png", "edge_betweenness.png", "hansen_accessibility.png",
-                    "information_centrality.png", "attack_curve.png", "reliability.png")
+                    "information_centrality.png", "attack_curve.png", "reliability.png", "composite.png")
 
 SERVICE_FIGURE_FILENAMES = ("service_weight.png", "node_importance.png", "school_sfca.png", "hospital_sfca.png",
     "school_criticality.png", "hospital_criticality.png")
@@ -17,10 +17,13 @@ def write_figures(nodes, edges, attack, summary, folder):
     import matplotlib.pyplot as plt
     folder = Path(folder)
     folder.mkdir(parents=True, exist_ok=True)
+    default = summary.get('default_view', 'population_weighted')
     for frame, column, name in ((nodes, "betweenness", "node_betweenness.png"),
             (edges, "edge_betweenness", "edge_betweenness.png"),
             (nodes, "hansen_accessibility", "hansen_accessibility.png"),
             (nodes, "information_centrality", "information_centrality.png")):
+        if default == 'population_weighted' and column in ('hansen_accessibility', 'information_centrality'):
+            column += '_pop'
         fig, ax = plt.subplots(figsize=(7, 6))
         values = frame[column].astype(float)
         if np.isfinite(values).any():
@@ -49,7 +52,8 @@ def write_figures(nodes, edges, attack, summary, folder):
     fig.savefig(folder / "attack_curve.png", dpi=140)
     plt.close(fig)
     fig, ax = plt.subplots(figsize=(7, 4))
-    for offset, group in enumerate(("unweighted", "population_weighted")):
+    groups = (default, 'unweighted' if default == 'population_weighted' else 'population_weighted')
+    for offset, group in enumerate(groups):
         for index, name in enumerate(("connectivity_reliability", "travel_time_reliability")):
             metric = summary[group][name]
             if metric["value"] is not None:
@@ -64,6 +68,22 @@ def write_figures(nodes, edges, attack, summary, folder):
     fig.tight_layout()
     fig.savefig(folder / "reliability.png", dpi=140)
     plt.close(fig)
+
+    if summary.get('headline'):
+        result = summary['headline']
+        labels = ['Bridge', 'Detour', 'Attack', 'Accessibility', 'Travel time', 'Connectivity']
+        keys = ['bridge', 'detour', 'attack', 'accessibility', 'travel_time_reliability', 'connectivity_reliability']
+        fig, ax = plt.subplots(figsize=(9, 4))
+        values = [result['components'][key] if result['components'][key] is not None else np.nan for key in keys]
+        ax.bar(labels, values, color='#147d92')
+        headline = f"{result['value']:.4f}" if result['value'] is not None else 'unavailable'
+        ax.set(ylim=(0, 1), ylabel='Normalized value (higher is better)',
+               title=f'{default.replace("_", " ").title()} | composite {headline}')
+        ax.yaxis.grid(True, alpha=.2)
+        ax.set_axisbelow(True)
+        fig.tight_layout()
+        fig.savefig(folder/'composite.png', dpi=180)
+        plt.close(fig)
 
     if summary.get('services'):
         _write_service_figures(nodes, summary['services'], folder)

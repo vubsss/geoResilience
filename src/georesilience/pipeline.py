@@ -8,7 +8,7 @@ from pathlib import Path
 from tempfile import TemporaryDirectory
 
 import geopandas as gpd
-from shapely.geometry import Point
+from shapely.geometry import LineString, Point
 
 from . import __version__
 from .config import RunConfig
@@ -23,15 +23,21 @@ from .reliability import compute_reliability, write_od_reliability
 from .reporting import build_report
 from .robustness import compute_targeted_attack, write_curve
 from .shortest_paths import resolve_resources, GIB
+from .time_models import FreeFlowTimeModel, PreparedTimeModel
+from .traffic import (canonical_traffic_graph, evaluate_closures, prepare_traffic, write_traffic_closures_csv,
+                      write_traffic_csv, write_traffic_od_csv)
 from .services import prepare_services, service_node_weights, service_node_fields, combined_node_importance
 from .service_inputs import load_facility_records
 from .service_metrics import ServiceUniverse, evaluate_service_matrix
 from .service_criticality import compute_service_criticality
 from .sfca import compute_sfca, METHOD_VERSION
 from .time_models import prepare_time_model
+from .composite import calculate_composites, write_composites
+from .traffic_failures import ReassignedTrafficTimeModel
 from .time_routing import prepare_static_time
 
-CORE_FILES = ("network.gpkg", "summary.json", "attack_curve.csv", "report.txt", "run_manifest.json", "od_reliability.csv")
+CORE_FILES = ("network.gpkg", "summary.json", "attack_curve.csv", "report.txt", "run_manifest.json",
+    "od_reliability.csv", "traffic_arcs.csv", "traffic_od.csv", "traffic_closures.csv", "composite.csv", "traffic_failure_states.csv")
 # Recognised outputs of prior releases, used only for safe overwrite migration.
 LEGACY_FILES = ("run_config.yaml", "robustness_curves.csv", "zones.gpkg")
 LEGACY_FIGURES = ("degree_hist.png", "closeness_ccdf.png", "straightness_ccdf.png", "betweenness_ccdf.png",
@@ -44,7 +50,7 @@ LEGACY_FIGURES = ("degree_hist.png", "closeness_ccdf.png", "straightness_ccdf.pn
 
 def _versions():
     result = {"python": platform.python_version(), "georesilience": __version__}
-    for package in ("osmnx", "networkx", "scipy", "numpy", "geopandas", "pyogrio", "rasterio", "shapely", "pyproj", "pydantic", "joblib", "matplotlib"):
+    for package in ("osmnx", "networkx", "networkit", "scipy", "numpy", "geopandas", "pyogrio", "rasterio", "shapely", "pyproj", "pydantic", "joblib", "matplotlib"):
         try:
             result[package] = version(package)
         except PackageNotFoundError:
@@ -53,12 +59,16 @@ def _versions():
 
 
 def _consumed(config):
-    files = [("roads", config.input.path), ("population", config.population.worldpop),
+    files = [("roads", config.input.path), ("population", config.population.worldpop), ("saved_population", config.population.node_counts),
         ("boundary", config.input.boundary), ("failure_probabilities", config.reliability.p_fail_csv),
-        ("od_pairs", config.reliability.od_pairs_csv)]
+        ("od_pairs", config.reliability.od_pairs_csv),
+        ("traffic_od", config.traffic.od_csv if config.traffic.enabled else None),
+        ("traffic_zone_masses", config.traffic.zone_mass_csv if config.traffic.enabled else None),
+        ("traffic_edge_times", config.traffic.edge_times_csv if config.traffic.enabled else None),
+        ("traffic_capacities", config.traffic.capacity_csv if config.traffic.enabled else None)]
     if config.services is not None:
         files.append(("facilities", config.services.facilities_csv))
-    if config.population.worldpop is None and config.services is None:
+    if config.population.worldpop is None and config.population.node_counts is None and config.services is None:
         raise ValueError("one local WorldPop count GeoTIFF is required")
     # GDAL may consult local georeferencing sidecars; include them in replay checks.
     raster = Path(config.population.worldpop).expanduser() if config.population.worldpop is not None else None
@@ -93,11 +103,29 @@ def _write_json(path, values):
     path.write_text(json.dumps(values, indent=2, allow_nan=False, sort_keys=True) + "\n", encoding="utf-8")
 
 
+class _TrafficTimeModel:
+    def __init__(self, traffic):
+        self.traffic = traffic
+
+    def prepare(self, graph, config):
+        return PreparedTimeModel(self.traffic.edge_seconds, {
+            "status": "computed" if self.traffic.summary["status"] in {"computed", "converged"} else "non_converged",
+            "time_model": "traffic_" + self.traffic.summary["source"], "time_units": "seconds",
+            "time_function": "directed traffic scenario travel time",
+            "assumptions": f"{self.traffic.summary['provenance']} traffic; fixed edge times during event simulations",
+            "maxspeed_coverage": None})
+
+
 def run(config: RunConfig, out_override=None, overwrite=False, *, time_model=None):
     output = Path(out_override or config.output.dir).expanduser().resolve()
     input_dir = (config.input.directory or config.input.path.parent).expanduser().resolve()
     _validate_output(output, input_dir, overwrite)
     jobs, budget = resolve_resources(config.analysis.n_jobs, config.analysis.max_memory_gb)
+    try:
+        import networkit as nk
+        nk.setNumberOfThreads(jobs)
+    except ImportError:
+        pass
     consumed = _consumed(config)
     inputs = {Path(item["path"]) for item in consumed}
     if any(path.resolve() in inputs for path in _known_paths(output)):
@@ -110,18 +138,46 @@ def run(config: RunConfig, out_override=None, overwrite=False, *, time_model=Non
     links = _link_rows(graph)
     failures = compute_failure_probabilities(graph, links, config.reliability)
     od = load_od_pairs(graph, config.reliability.od_pairs_csv)
+    traffic = None
+    reliability_time_model = time_model
+    if config.traffic.enabled:
+        if time_model is not None or config.travel_time.time_model != "free_flow":
+            raise ValueError("traffic supplies travel-time costs; remove the custom or edge-attribute travel-time model")
+        assignment_graph, tag_changes = canonical_traffic_graph(graph, config.travel_time.highway_speeds_kph)
+        free_flow = None
+        if config.traffic.source == "assignment":
+            free_flow = FreeFlowTimeModel().prepare(assignment_graph, config.travel_time)
+            if free_flow.summary["status"] != "computed":
+                raise ValueError("traffic assignment requires resolvable edge speeds; use --speed or supply maxspeed tags")
+        traffic = prepare_traffic(assignment_graph, config.traffic,
+            free_flow.edge_seconds if free_flow is not None else None, population.weights)
+        traffic.summary["resolved_mixed_tag_fields"] = tag_changes
+        if config.traffic.source == "assignment" and config.traffic.closure_top_n:
+            evaluate_closures(graph, links, traffic, free_flow.edge_seconds, config.traffic)
+            traffic.summary["closures"] = traffic.closure_rows
+        reliability_time_model = _TrafficTimeModel(traffic)
     facilities = prepare_services(graph, config.services) if config.services is not None else None
     weights = service_node_weights(facilities, config.services) if facilities is not None else None
     importance = combined_node_importance(population.weights, weights, config.services.population_importance) if facilities is not None else None
     service_nodes = [node for node, weight in zip(graph, weights) if weight > 0] if weights is not None else []
-    prepared_time = prepare_time_model(graph, config.travel_time, time_model) if facilities is not None else None
+    prepared_time = prepare_time_model(graph, config.travel_time, reliability_time_model) if facilities is not None else None
     routing = (prepare_static_time(graph, links, config.travel_time, prepared=prepared_time)
         if facilities is not None and config.services.mode == 'sfca' else None)
-    demand_basis = 'population' if config.population.worldpop is not None else 'uniform_node_demand'
-    settings = {"half_distance_km": config.accessibility.half_distance_km,
+    demand_basis = 'population' if config.population.worldpop is not None or config.population.node_counts is not None else 'uniform_node_demand'
+    cost_mode = config.accessibility.cost
+    if cost_mode == 'auto':
+        cost_mode = 'time' if traffic is not None else 'distance'
+    local_costs = None
+    if cost_mode == 'time':
+        cost_prepared = prepare_time_model(graph, config.travel_time, reliability_time_model)
+        if cost_prepared.summary['status'] != 'computed':
+            raise ValueError('time-based graph metrics require complete positive edge times')
+        local_costs = cost_prepared.edge_seconds
+    half_cost = config.accessibility.half_time_minutes * 60 if local_costs is not None else config.accessibility.half_distance_km * 1000
+    settings = {"half_distance_km": half_cost / 1000,
                 "cutoff_factor": config.accessibility.cutoff_factor, "n_jobs": jobs, "budget_bytes": budget}
     local = compute_local_metrics(graph, population.weights, coverage=config.criticality.coverage,
-        link_candidate_limit=config.criticality.link_candidates, node_candidate_limit=config.criticality.node_candidates, service_nodes=service_nodes, **settings)
+        link_candidate_limit=config.criticality.link_candidates, node_candidate_limit=config.criticality.node_candidates, service_nodes=service_nodes, edge_costs=local_costs, **settings)
     for row in local.links:
         row.update(failures.link_metrics[row["link_id"]])
     service_baseline = sfca = criticality = None
@@ -145,13 +201,30 @@ def run(config: RunConfig, out_override=None, overwrite=False, *, time_model=Non
                         f'{category}_sfca_per_1000': result.reason})
     attack = compute_targeted_attack(graph, local.links, population.weights,
         fraction=config.robustness.fraction, steps=config.robustness.steps, order=config.robustness.order, seed=config.analysis.seed,
-        service_weights=weights, node_importance=importance[0] if importance is not None else None)
+        service_weights=weights, node_importance=importance[0] if importance is not None else None, edge_costs=local_costs)
+    reassignment = None
+    if traffic is not None and config.traffic.source == 'assignment' and config.traffic.reassign_failures:
+        def facility_state(times, closed):
+            if facilities is None or config.services.mode != 'sfca':
+                return {}
+            snapshot_routing = prepare_static_time(graph, links, config.travel_time,
+                prepared=PreparedTimeModel(times, {'status': 'computed', 'time_units': 'seconds'}))
+            result = compute_sfca(facilities, population.weights, config.services, snapshot_routing,
+                removed_links=closed, n_jobs=1, budget_bytes=budget, demand_basis=demand_basis)
+            return {f'{category}_{key}': value.summary[key] for category, value in result.categories.items()
+                    for key in ('population_mean_per_1000', 'zero_access_population_share')}
+        reassignment = ReassignedTrafficTimeModel(graph, links, traffic, free_flow.edge_seconds,
+            config.traffic, on_state=facility_state)
+        reliability_time_model = reassignment
+        # Baseline 2SFCA uses a static snapshot; reliability explicitly prepares dynamic event costs.
     reliability = compute_reliability(graph, local.links, population.weights, failures.user_probabilities,
         p0=config.reliability.p0, p0_sweep=config.reliability.p0_sweep,
         connectivity_samples=config.reliability.samples, travel_time_samples=config.travel_time.samples,
         time_threshold=config.travel_time.tau, seed=config.analysis.seed, n_jobs=jobs, budget_bytes=budget,
-        time_config=config.travel_time, time_model=time_model, od_inputs=od,
-        service_weights=weights, prepared_time=prepared_time)
+        time_config=config.travel_time, time_model=reliability_time_model, od_inputs=od,
+        service_weights=weights, prepared_time=None if reassignment is not None else prepared_time)
+    if reassignment is not None:
+        traffic.summary['failure_reassignment'] = reassignment.summary()
     baseline = local.baseline
     definitions = {
         "routing": "Betweenness: length-weighted undirected minimum-link graph; routing/removals: directed retained network.",
@@ -172,7 +245,8 @@ def run(config: RunConfig, out_override=None, overwrite=False, *, time_model=Non
         "network": {**cleaning["final"], "network_type_applied": input_meta["network_type_applied"]},
         "population": population.summary, "boundary": boundary_meta, "coverage": local.coverage,
         "probabilities": failures.summary, "time_model": reliability.summary["time_model"],
-        "attack": attack.summary, "definitions": definitions, "od_warnings": od.warnings}
+        "attack": attack.summary, "definitions": definitions, "od_warnings": od.warnings,
+        **({"traffic": traffic.summary} if traffic is not None else {})}
     if facilities is not None:
         summary['schema_version'] = 2
         summary['services'] = {'schema_version': 1, 'input': facilities.summary,
@@ -189,10 +263,27 @@ def run(config: RunConfig, out_override=None, overwrite=False, *, time_model=Non
             'node_importance_weighted': {'targeted_attack_robustness': attack.summary['node_importance_weighted']},
             'sfca': sfca.summary, 'criticality': criticality.summary,
             'limitations': 'study boundary does not correct missing neighbouring demand/supply; reliability views do not recompute 2SFCA'}
+        if local_costs is not None:
+            summary['services']['service_weighted']['hansen_accessibility']['definition'] = (
+                'original population-to-service normalized seconds-decay Hansen, including co-location')
+        if reassignment is not None and config.services.mode == 'sfca':
+            summary['services']['failure_sfca'] = reassignment.summary()
+            summary['services']['limitations'] = (
+                'per-event static 2SFCA catchments recomputed after traffic reassignment; original demand retained; '
+                'facility operations assumed unaffected except road access; missing neighbouring supply/demand not corrected')
         if demand_basis != 'population':
             definitions['population'] = 'Population absent: weighted views use one uniform demand unit per retained node, not resident counts.'
             definitions['service_demand'] = summary['services']['demand']['description']
             summary['services']['criticality']['raw_changes'] = 'signed damaged-minus-baseline means per uniform node demand unit'
+    summary['default_view'] = config.analysis.default_view
+    summary['metric_cost'] = {'kind': cost_mode, 'unit': 'seconds' if local_costs is not None else 'metres', 'half_cost': half_cost}
+    if local_costs is not None:
+        definitions['routing'] = 'Graph and removal routing use fixed intact directed seconds; physical road membership and lengths remain unchanged. Failure reliability reassigns traffic when requested.'
+        definitions['hansen'] = f'Normalized time Hansen; half-life {half_cost:g} seconds; original population/pair denominators.'
+        definitions['detour'] = 'Worst directional alternative-time / original directional road time; no alternative is null.'
+        definitions['betweenness'] = 'Undirected minimum physical-road mean directional time; canonical road tie break.'
+    summary['composite'] = calculate_composites(summary, config.composite)
+    summary['headline'] = summary['composite'][summary['default_view']]
     if config.reliability.p0_sweep:
         summary["reliability_scenarios"] = {key: value for key, value in reliability.summary["scenarios"].items() if key != "primary"}
     resolved = config.model_dump(mode="json")
@@ -201,6 +292,8 @@ def run(config: RunConfig, out_override=None, overwrite=False, *, time_model=Non
     resolved["input"]["directory"] = str(input_dir)
     if config.population.worldpop is not None:
         resolved["population"]["worldpop"] = str(Path(config.population.worldpop).expanduser().resolve())
+    if config.population.node_counts is not None:
+        resolved['population']['node_counts'] = str(config.population.node_counts.resolve())
     if config.services is None:
         resolved.pop('services', None)
     else:
@@ -208,6 +301,10 @@ def run(config: RunConfig, out_override=None, overwrite=False, *, time_model=Non
     for section, field in (("input", "boundary"), ("reliability", "p_fail_csv"), ("reliability", "od_pairs_csv")):
         if resolved[section][field] is not None:
             resolved[section][field] = str(Path(resolved[section][field]).expanduser().resolve())
+    for field in ("od_csv", "zone_mass_csv", "edge_times_csv", "capacity_csv"):
+        value = resolved["traffic"].get(field)
+        if value is not None:
+            resolved["traffic"][field] = str(Path(value).expanduser().resolve())
     resolved["analysis"].update(n_jobs=jobs, max_memory_gb=budget / GIB)
     if time_model is not None:
         resolved["travel_time"]["time_model"] = "custom"
@@ -216,6 +313,7 @@ def run(config: RunConfig, out_override=None, overwrite=False, *, time_model=Non
         "input_cleaning_fingerprint": graph.graph["input_cleaning_fingerprint"], "cleaning": cleaning,
         "boundary": boundary_meta, "coverage": local.coverage, "population": population.provenance,
         "probabilities": failures.summary, "time_model": reliability.summary["time_model"],
+        **({"traffic": traffic.summary} if traffic is not None else {}),
         "sampling": reliability.computation, "attack_removal_order": attack.removal_order,
         "pair_universe": {"nodes": baseline.universe.n, "ordered_node_pairs": baseline.universe.denominator,
             "normalized_population_pair_mass": baseline.universe.denominator_pop,
@@ -260,6 +358,26 @@ def run(config: RunConfig, out_override=None, overwrite=False, *, time_model=Non
         stage = Path(directory)
         nodes.to_file(stage / "network.gpkg", layer="nodes", driver="GPKG", engine="pyogrio")
         edges.to_file(stage / "network.gpkg", layer="edges", driver="GPKG", engine="pyogrio")
+        if traffic is not None:
+            write_traffic_csv(traffic, stage / "traffic_arcs.csv")
+            if traffic.od_rows:
+                write_traffic_od_csv(traffic, stage / "traffic_od.csv")
+            if traffic.closure_rows is not None:
+                write_traffic_closures_csv(traffic, stage / "traffic_closures.csv")
+            edge_by_label = {(str(u), str(v), str(key)): (u, v, key)
+                for u, v, key in traffic.edge_seconds}
+            link_by_edge = {edge: row["link_uid"] for row in links for edge in row["_edges"]}
+            arc_records = []
+            for row in traffic.rows:
+                edge = edge_by_label[(row["u"], row["v"], row["key"])]
+                u, v, key = edge
+                geometry = graph[u][v][key].get("geometry")
+                if geometry is None:
+                    geometry = LineString([(graph.nodes[u]["x"], graph.nodes[u]["y"]),
+                                           (graph.nodes[v]["x"], graph.nodes[v]["y"])])
+                arc_records.append({**row, "link_uid": link_by_edge[edge], "geometry": geometry})
+            gpd.GeoDataFrame(arc_records, geometry="geometry", crs=graph.graph["crs"]).to_file(
+                stage / "network.gpkg", layer="traffic_arcs", driver="GPKG", engine="pyogrio", mode="a")
         if facilities is not None:
             rows = [row for result in sfca.categories.values() for row in result.facilities]
             if rows:
@@ -267,6 +385,9 @@ def run(config: RunConfig, out_override=None, overwrite=False, *, time_model=Non
             else:
                 points = gpd.GeoDataFrame({'facility_id': [], 'service_type': []}, geometry=[], crs=4326)
             points.to_file(stage / 'network.gpkg', layer='facilities', driver='GPKG', engine='pyogrio')
+        write_composites(summary['composite'], stage / 'composite.csv')
+        if reassignment is not None:
+            reassignment.write(stage / 'traffic_failure_states.csv')
         _write_json(stage / "summary.json", summary)
         _write_json(stage / "run_manifest.json", manifest)
         (stage / "report.txt").write_text(build_report(summary), encoding="utf-8")

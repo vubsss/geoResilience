@@ -464,7 +464,7 @@ def _write_csv(stage, template, roads, frame):
         return
     fingerprint, columns, records = template
     values = dict(zip(roads.link_uid, frame.p_fail))
-    with (stage / "failure_probabilities.csv").open("w", newline="") as stream:
+    with (stage / "failure_probabilities.csv").open("w", newline="", encoding="utf-8") as stream:
         stream.write(
             "# Closure probabilities per road per event; self-loops omitted.\n"
             + FINGERPRINT_PREFIX

@@ -12,7 +12,8 @@ from .links import _link_rows, cleaning_fingerprint, identify_links
 
 EXTRA_WAY_TAGS = (
     "motor_vehicle", "motorcar", "hgv", "access", "service", "area",
-    "lanes", "surface", "maxspeed",
+    "lanes", "lanes:forward", "lanes:backward", "lanes:both_ways",
+    "width", "width:carriageway", "width:forward", "width:backward", "surface", "maxspeed",
 )
 DRIVE_EXCLUDED_HIGHWAYS = {
     "abandoned", "bridleway", "bus_guideway", "construction", "corridor", "cycleway",

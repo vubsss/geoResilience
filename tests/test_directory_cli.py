@@ -16,7 +16,7 @@ from rasterio.transform import from_origin
 
 from tests.helpers.small_inputs import cell_graph, raster_fixture
 
-CORE_FILES = {"network.gpkg", "summary.json", "attack_curve.csv", "report.txt", "run_manifest.json"}
+CORE_FILES = {"network.gpkg", "summary.json", "attack_curve.csv", "report.txt", "run_manifest.json", "composite.csv"}
 STRUCTURAL_METRICS = {"bridge_redundancy", "detour_redundancy", "detour_no_alternative_share",
     "targeted_attack_robustness", "hansen_accessibility", "connectivity_reliability", "travel_time_reliability"}
 WEIGHTED_METRICS = {"targeted_attack_robustness", "hansen_accessibility",
@@ -29,7 +29,7 @@ EDGE_METRICS = {"edge_betweenness", "is_bridge", "detour_ratio", "detour_none", 
     "efficiency_drop_pop", "accessibility_drop", "accessibility_drop_pop", "disconnected_pair_fraction",
     "disconnected_pair_fraction_pop", "evaluated", "null_reasons"}
 REMOVED_FIELDS = {"closeness", "straightness", "degree_centrality", "classification", "scorecard",
-    "zones", "composite", "vuln", "vuln_k2", "rel_importance", "p_in_main", "p_tt_ok", "crit_rank"}
+    "zones", "vuln", "vuln_k2", "rel_importance", "p_in_main", "p_tt_ok", "crit_rank"}
 
 
 def invoke(arguments):
@@ -88,6 +88,9 @@ def assert_public_summary(summary):
             assert metric["definition"]
             if metric["value"] is None:
                 assert metric["reason"]
+    assert summary['default_view'] == 'population_weighted'
+    assert summary['headline'] == summary['composite']['population_weighted']
+    assert summary['headline']['weights']['attack'] == .25
     assert not REMOVED_FIELDS & summary.keys()
     json.dumps(summary, allow_nan=False)
 

@@ -134,6 +134,33 @@ def allocate_population(graph, boundary, path, snap_max_m):
 
 
 def prepare_population(graph, boundary, config, *, uniform_if_missing=False):
+    if getattr(config, 'node_counts', None) is not None:
+        path = Path(config.node_counts).expanduser().resolve()
+        frame = gpd.read_file(path, layer='nodes')
+        if (not {'node_id', 'population'} <= set(frame) or frame.crs is None or frame.empty
+                or frame.geometry.isna().any() or frame.geometry.is_empty.any()
+                or not frame.geom_type.eq('Point').all()):
+            raise ValueError('saved population requires georeferenced nodes with node_id,population')
+        ids = frame.node_id.astype(str)
+        if ids.duplicated().any() or set(ids) != set(map(str, graph)):
+            raise ValueError('saved population node IDs must exactly match the cleaned network')
+        frame = frame.to_crs(graph.graph['crs']).set_index(ids)
+        weights = np.array([float(frame.loc[str(n), 'population']) for n in graph])
+        if not np.isfinite(weights).all() or (weights < 0).any():
+            raise ValueError('saved population counts must be finite and nonnegative')
+        for node, data in graph.nodes(data=True):
+            point = frame.loc[str(node)].geometry
+            if point.geom_type != 'Point' or point.is_empty or not np.isfinite([point.x, point.y]).all() or np.hypot(point.x-data['x'], point.y-data['y']) > .1:
+                raise ValueError('saved population node coordinates do not match the cleaned network')
+        total = float(weights.sum())
+        if not np.isfinite(total):
+            raise ValueError('saved population total must be finite')
+        return PopulationResult(weights,
+            {'total': total, 'allocated': total, 'unallocated': 0., 'unallocated_pct': 0.,
+             'units': 'people', 'basis': 'saved_node_counts', 'snap_max_m': None,
+             'coverage_note': 'Exact retained-node replay; original raster allocation losses are not recoverable from this file.'},
+            {'path': str(path), 'sha256': sha256_file(path), 'source': 'saved_node_counts',
+             'validation': 'Exact node IDs and projected coordinates within 0.1 metre; no spatial redistribution'})
     if config.worldpop is None:
         if not uniform_if_missing:
             return None

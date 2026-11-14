@@ -1,5 +1,27 @@
 # GeoResilience
 
+## Integrated final workflow
+
+The framework now supports one configured workflow for traffic, optional flood
+probabilities, separate critical-facility accessibility, and a six-component
+composite. **Population-weighted results are the default headline.** Bridge and
+detour remain road-based; critical-facility accessibility stays separate.
+Composite weights are configurable and default to **25% attack robustness and
+15% for each of the other five metrics**. Assignment traffic is reassigned after
+sampled road failures by default.
+
+```sh
+python -m georesilience.cli study --config study.json
+```
+
+See [the complete workflow guide](docs/final_pipeline.md) for JSON configuration,
+normalization, saved-population validation, flood setup, output files, chart
+export, and the Hyderabad reproduction commands. Earlier distance-only and
+fixed-traffic documentation below describes those explicit legacy modes; `auto`
+now selects time costs when traffic is enabled. The production attack protocol
+remains distinct from the historical presentation's batch-attack experiment.
+
+
 GeoResilience analyses a local road network and a WorldPop population-count raster, with optional schools/hospitals and capacity-aware accessibility. A run reports structural and population-weighted resilience measures together, with their definitions, evaluated coverage and input assumptions.
 
 ## Install and run
@@ -46,6 +68,72 @@ No YAML configuration is needed. Run `georesilience run --help` for all options.
 | `--seed 42`, `--jobs auto`, `--max-memory-gb auto` | Reproducible sampling and resource limits |
 
 Existing nonempty output requires `--overwrite`. Overwrite removes recognised generated files and preserves unknown user files. Input and CSV validation occurs before results are replaced.
+
+## Tier 4 traffic scenarios
+
+Traffic assignment is optional. By default, `--simulate-traffic` uses the Tier 2 population
+allocated to each retained road node to generate synthetic OD demand, and derives directed road
+capacity from OSM width/lanes tags. The BPR or conical volume-delay function assigns traffic; its
+congested seconds become the baseline travel-time cost used by reliability. This is a simulated
+scenario, not observed traffic.
+
+In population mode, total hourly demand is `sum(node_population) * trip_rate`; each reachable
+non-intrazonal OD pair is weighted by `P_origin * P_destination * exp(-lambda * free_flow_minutes)`
+and normalized to that total. To keep the assignment tractable on larger networks, populated nodes
+are grouped into up to 100 projected-coordinate grid zones by default; each zone retains the sum of
+its constituent Tier 2 node populations and is represented by a nearby road node. Change the limit
+with `--traffic-population-zone-limit`. This project-specific gravity weighting is not copied directly from
+a Hyderabad paper. The default effective trip rate is `0.1 PCU/person/hour` and gravity decay is
+`0.08 per minute`; they are illustrative assumptions, not values taken from a Hyderabad study or
+calibrated local counts. The effective trip rate bundles trip generation, motorized mode share, and
+vehicle/PCU conversion, so it must be calibrated before interpreting the volumes as realistic.
+Override the assumptions with `--traffic-population-trip-rate-per-person-h` and
+`--traffic-gravity-lambda-per-min`.
+
+Capacity uses `lanes` when tagged; for two-way roads the total lane count is split equally by
+direction, while one-way lanes apply to that directed arc. If lanes are absent, `width` is converted
+to lane-equivalents using 3.5 m per lane, again split for two-way roads. If both tags are absent,
+the model assumes one lane per direction. Effective lane capacity defaults to `1000 PCU/hour/lane`.
+These defaults are not Hyderabad calibrations and can be changed with
+`--traffic-capacity-per-lane-pcu-h`, `--traffic-default-lanes-per-direction`, and
+`--traffic-lane-width-m`. Tagged width/lanes coverage and these defaults are recorded in the run
+summary and manifest. Explicit `--traffic-capacities` or `--traffic-capacity-pcu-h` override the
+derived capacities.
+
+To run the population-based case study:
+
+```sh
+georesilience run input/hyderabad --out results/hyderabad-traffic \
+  --simulate-traffic --traffic-period weekday_am_peak
+```
+
+Alternatively, use explicit OD demand or zone masses. The CSV contracts are described below.
+
+For user-specified synthetic gravity demand, provide zone nodes from the cleaned road graph in a CSV with
+`node,mass` columns, then run:
+
+```sh
+georesilience run input/hyderabad --out results/hyderabad-traffic \
+  --simulate-traffic --traffic-zones data/zone-masses.csv \
+  --traffic-demand-pcu-h 100000 --traffic-gravity-lambda-per-min 0.08 \
+  --traffic-capacity-pcu-h 1000 --traffic-period weekday_am_peak
+```
+
+The example values are illustrative. `--traffic-zones` or `--traffic-od` selects that demand source;
+without either, simulation uses node population automatically. Add `--simulate-traffic` for every traffic mode.
+`--traffic-od FILE` accepts columns
+`origin,destination,demand_pcu_h` using cleaned graph node IDs. Replace the uniform capacity with
+`--traffic-capacities FILE` (`u,v,key,capacity_pcu_h`) for directed edge-specific capacities, or
+use `--traffic-edge-times FILE` (`u,v,key,travel_time_s`) to supply times without assignment.
+Use repeatable `--speed HIGHWAY=KPH` options to resolve free-flow speeds when OSM has no usable
+`maxspeed` tags. `--traffic-closure-top-n N` reassigns traffic after closing the N highest-flow
+physical links.
+
+Runs with assignment write `traffic_arcs.csv` and `traffic_od.csv`; closure scenarios also write
+`traffic_closures.csv`. All runs add a `traffic_arcs` layer to `network.gpkg`, include traffic
+assumptions in `summary.json`, `run_manifest.json` and `report.txt`, and retain the consumed CSV
+hashes in the manifest. The model is static for one declared period: Monte Carlo road failures
+reuse the assigned times, while the explicit top-link closure scenarios rerun assignment.
 
 ## Failure probabilities
 
@@ -327,8 +415,9 @@ importance and category catchments; validate speed/time inputs, retained-network
 and demand allocation coverage; and inspect candidate scope. School demand uses
 total population, not eligible school-age enrolment. Missing neighbouring demand
 and supply at study boundaries are not corrected. Age-specific demand, capacity
-acquisition, external POI discovery, enhanced/decayed 2SFCA and full repeated
-2SFCA inside Monte Carlo/attack steps remain deferred.
+acquisition, external POI discovery, enhanced/decayed 2SFCA and repeated
+2SFCA inside targeted-attack steps remain deferred. The integrated traffic
+workflow recomputes standard 2SFCA after sampled probability-based closures.
 
 ## Results and reproducibility
 

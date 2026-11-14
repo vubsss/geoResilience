@@ -28,6 +28,7 @@ class CleaningConfig(StrictModel):
 
 
 class AnalysisConfig(StrictModel):
+    default_view: Literal["population_weighted", "unweighted"] = "population_weighted"
     seed: int = Field(default=42, ge=0)
     n_jobs: Annotated[int, Field(ge=1)] | Literal["auto"] = "auto"
     max_memory_gb: Annotated[float, Field(gt=0, allow_inf_nan=False)] | Literal["auto"] = "auto"
@@ -83,7 +84,67 @@ class TravelTimeConfig(StrictModel):
         return self
 
 
+class TrafficConfig(StrictModel):
+    enabled: bool = False
+    reassign_failures: bool = True
+    source: Literal["assignment", "edge_times_csv"] = "assignment"
+    period: str = "illustrative_one_hour"
+    duration_h: float = Field(default=1.0, gt=0, allow_inf_nan=False)
+    demand_source: Literal["od_csv", "gravity", "population"] = "od_csv"
+    od_csv: Path | None = None
+    zone_mass_csv: Path | None = None
+    total_demand_pcu_h: float | None = Field(default=None, gt=0, allow_inf_nan=False)
+    gravity_lambda_per_min: float | None = Field(default=0.08, gt=0, allow_inf_nan=False)
+    population_trip_rate_per_person_h: float = Field(default=0.1, gt=0, allow_inf_nan=False)
+    population_zone_limit: int = Field(default=100, ge=2)
+    road_capacity_pcu_h_per_lane: float = Field(default=1000, gt=0, allow_inf_nan=False)
+    default_lanes_per_direction: float = Field(default=1, gt=0, allow_inf_nan=False)
+    lane_width_m: float = Field(default=3.5, gt=0, allow_inf_nan=False)
+    edge_times_csv: Path | None = None
+    capacity_csv: Path | None = None
+    capacity_pcu_h: float | None = Field(default=None, gt=0, allow_inf_nan=False)
+    vdf: Literal["bpr", "conical"] = "bpr"
+    alpha: float = Field(default=0.15, gt=0, allow_inf_nan=False)
+    beta: float = Field(default=4.0, gt=0, allow_inf_nan=False)
+    relative_gap: float = Field(default=1e-4, gt=0, allow_inf_nan=False)
+    max_iterations: int = Field(default=200, ge=1)
+    closure_top_n: int = Field(default=0, ge=0)
+
+    @model_validator(mode="after")
+    def validate_inputs(self):
+        if not self.enabled:
+            return self
+        if not self.period.strip():
+            raise ValueError("traffic.period must be nonempty")
+        if self.source == "assignment":
+            if self.demand_source == "od_csv" and self.od_csv is None:
+                raise ValueError("traffic assignment needs od_csv")
+            if self.demand_source == "od_csv" and self.zone_mass_csv is not None:
+                raise ValueError("traffic demand must use either od_csv or zone_mass_csv, not both")
+            if self.demand_source == "gravity" and (self.zone_mass_csv is None or
+                                                    self.total_demand_pcu_h is None or
+                                                    self.gravity_lambda_per_min is None):
+                raise ValueError("traffic gravity demand needs zone_mass_csv, total_demand_pcu_h and gravity_lambda_per_min")
+            if self.demand_source == "population" and self.gravity_lambda_per_min is None:
+                raise ValueError("traffic population demand needs gravity_lambda_per_min")
+            if self.demand_source == "population" and self.total_demand_pcu_h is not None:
+                raise ValueError("traffic population demand uses population_trip_rate_per_person_h, not total_demand_pcu_h")
+            if self.demand_source == "gravity" and self.od_csv is not None:
+                raise ValueError("traffic demand must use either od_csv or zone_mass_csv, not both")
+            if self.vdf == "conical" and abs(1 + math.hypot(self.alpha, self.beta) -
+                                              self.alpha - self.beta) > .01:
+                raise ValueError("traffic conical alpha/beta must give approximately free-flow time at zero volume")
+        else:
+            if self.edge_times_csv is None:
+                raise ValueError("traffic.edge_times_csv is required for supplied edge times")
+            if self.closure_top_n:
+                raise ValueError("traffic.closure_top_n requires assignment demand and a VDF")
+        return self
+
+
 class AccessibilityConfig(StrictModel):
+    cost: Literal["auto", "distance", "time"] = "auto"
+    half_time_minutes: float = Field(default=6, gt=0, allow_inf_nan=False)
     half_distance_km: float = Field(default=2, gt=0, allow_inf_nan=False)
     cutoff_factor: float = Field(default=5, gt=0, allow_inf_nan=False)
 
@@ -98,8 +159,34 @@ class AccessibilityConfig(StrictModel):
 
 
 class PopulationConfig(StrictModel):
-    worldpop: str | None = None
+    worldpop: str | Path | None = None
+    node_counts: Path | None = None
     snap_max_m: float = Field(default=500, ge=0, allow_inf_nan=False)
+
+    @model_validator(mode="after")
+    def one_source(self):
+        if self.worldpop is not None and self.node_counts is not None:
+            raise ValueError("choose population.worldpop or population.node_counts, not both")
+        return self
+
+
+class CompositeWeights(StrictModel):
+    bridge: float = Field(default=.15, ge=0, allow_inf_nan=False)
+    detour: float = Field(default=.15, ge=0, allow_inf_nan=False)
+    attack: float = Field(default=.25, ge=0, allow_inf_nan=False)
+    accessibility: float = Field(default=.15, ge=0, allow_inf_nan=False)
+    travel_time_reliability: float = Field(default=.15, ge=0, allow_inf_nan=False)
+    connectivity_reliability: float = Field(default=.15, ge=0, allow_inf_nan=False)
+
+    @model_validator(mode="after")
+    def sum_to_one(self):
+        if not math.isclose(math.fsum(self.model_dump().values()), 1., abs_tol=1e-9, rel_tol=0):
+            raise ValueError("composite weights must sum to 1 (use fractions, not percentages)")
+        return self
+
+
+class CompositeConfig(StrictModel):
+    weights: CompositeWeights = Field(default_factory=CompositeWeights)
 
 
 class ServiceCategoryConfig(StrictModel):
@@ -142,10 +229,12 @@ class RunConfig(StrictModel):
     network: NetworkConfig = Field(default_factory=NetworkConfig)
     cleaning: CleaningConfig = Field(default_factory=CleaningConfig)
     analysis: AnalysisConfig = Field(default_factory=AnalysisConfig)
+    composite: CompositeConfig = Field(default_factory=CompositeConfig)
     criticality: CriticalityConfig = Field(default_factory=CriticalityConfig)
     robustness: RobustnessConfig = Field(default_factory=RobustnessConfig)
     reliability: ReliabilityConfig = Field(default_factory=ReliabilityConfig)
     travel_time: TravelTimeConfig = Field(default_factory=TravelTimeConfig)
+    traffic: TrafficConfig = Field(default_factory=TrafficConfig)
     accessibility: AccessibilityConfig = Field(default_factory=AccessibilityConfig)
     population: PopulationConfig = Field(default_factory=PopulationConfig)
     services: ServicesConfig | None = None

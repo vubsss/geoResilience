@@ -28,7 +28,7 @@ def _largest_component(graph):
         -len(component), tuple(sorted(node_key(node) for node in component))), default=set())
 
 
-def compute_targeted_attack(graph, links, population, fraction=.20, steps=50, order="adaptive", seed=42, *, service_weights=None, node_importance=None):
+def compute_targeted_attack(graph, links, population, fraction=.20, steps=50, order="adaptive", seed=42, *, service_weights=None, node_importance=None, edge_costs=None):
     """Remove floor(fraction * M) links; recompute adaptive rank after each link.
 
     Export at most ``steps`` post-removal points and integrate only that exported
@@ -96,7 +96,9 @@ def compute_targeted_attack(graph, links, population, fraction=.20, steps=50, or
                 if importance.service_total else None)
 
     def ranked(rows):
-        _, scores, _, _ = _structural(structural_nodes, rows)
+        routing_rows = ([{**row, '_routing_cost': math.fsum(edge_costs[e] for e in row['_edges']) / len(row['_edges'])}
+                         for row in rows] if edge_costs is not None else rows)
+        _, scores, _, _ = _structural(structural_nodes, routing_rows)
         return sorted(rows, key=lambda row: (-scores[row["link_id"]], row["link_uid"], row["link_id"]))
 
     record(0)

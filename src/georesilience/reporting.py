@@ -3,7 +3,14 @@
 
 def build_report(summary):
     lines = ["GeoResilience", ""]
-    for group in ("unweighted", "population_weighted"):
+    if 'headline' in summary:
+        headline = summary['headline']
+        lines.extend(['Default result: ' + summary['default_view'],
+                      'Composite: ' + (str(headline['value']) if headline['value'] is not None else 'unavailable: ' + headline['reason']),
+                      'Weights: ' + str(headline['weights']),
+                      'Facility accessibility is reported separately.', ''])
+    default = summary.get('default_view', 'population_weighted')
+    for group in (default, 'unweighted' if default == 'population_weighted' else 'population_weighted'):
         title = group.replace("_", " ").title()
         if group == "population_weighted" and summary["population"].get("basis") == "uniform_node_demand":
             title = "Uniform node demand weighted (population absent)"
@@ -31,7 +38,8 @@ def build_report(summary):
     lines.extend(["", "Definitions and assumptions", *["  " + value for value in summary["definitions"].values()],
                   "  Failure probabilities apply to one event/scenario, not annual rates. Physical-link failures are independent.",
                   "  Reliability intervals are conservative 95% Hoeffding bounds over independent scenario fractions.",
-                  "  Travel times use supplied static speeds or edge costs; congestion and observed trips are not modelled.",
+                  ("  Traffic costs include simulated congestion; OD is synthetic or supplied, not automatically observed."
+                   if summary.get('traffic') else "  Travel times use supplied static speeds or edge costs; congestion and observed trips are not modelled."),
                   "  Speed/time source: " + str(summary["time_model"]),
                   "  Attack AUC: " + summary["attack"]["auc_convention"],
                   f"  Attack horizon: {summary['attack']['horizon']:.6g} of physical links; "
@@ -41,6 +49,10 @@ def build_report(summary):
         lines = [('Uniform node demand units' if line == 'Population counts' else line)
             for line in lines if 'WorldPop counts are modelled estimates' not in line]
         lines.extend(['', 'Population fallback: one demand unit per retained node; these are not resident counts.'])
+    if population.get('coverage_note'):
+        lines.extend(['', 'Saved population coverage: ' + population['coverage_note']])
+    if summary.get('metric_cost'):
+        lines.append('Graph routing cost: ' + str(summary['metric_cost']))
     if summary.get('services'):
         services = summary['services']
         lines.extend(['', 'Critical services and node importance',
@@ -85,4 +97,36 @@ def build_report(summary):
         lines.extend(['', '  ' + services['limitations']])
     if summary.get("reliability_scenarios"):
         lines.append("  Additional p0 scenarios: " + ", ".join(summary["reliability_scenarios"]))
+    if summary.get("traffic"):
+        traffic = summary["traffic"]
+        lines.extend(["", "Traffic assignment",
+            f"  Status: {traffic['status']}; source: {traffic['source']}; period: {traffic['period']}",
+            f"  Directed arcs: {traffic['arc_count']}"])
+        if traffic["source"] == "assignment":
+            lines.extend([f"  Demand: {traffic['demand_pcu_h']:.6g} PCU/h",
+                f"  Demand source: {traffic['demand_source']}; capacity source: {traffic['capacity_source']}",
+                f"  VDF: {traffic['vdf']} (alpha={traffic['alpha']}, beta={traffic['beta']})",
+                f"  Relative gap: {traffic['relative_gap']:.6g} after {traffic['iterations']} iterations",
+                f"  Total system travel time: {traffic['tstt_pcu_hours']:.6g} PCU-hours",
+                f"  Mean OD time/delay: {traffic['mean_od_time_s']:.6g} / {traffic['mean_od_delay_s']:.6g} seconds",
+                "  Traffic inputs are simulated/supplied scenario assumptions, not observed counts."])
+            failure = traffic.get('failure_reassignment')
+            if failure:
+                lines.extend([f"  Reassigned failure states: {failure['evaluated_states']}; all converged: {failure['all_converged']}",
+                    '  ' + failure['demand_policy']])
+                for name, value in failure['means'].items():
+                    lines.append(f'    Mean {name}: {value:.8g}')
+            if traffic["demand_source"] == "population":
+                lines.append(f"  Effective rate: {traffic['population_trip_rate_per_person_h']:.6g} PCU/person/hour")
+                lines.append(f"  Population zones: {traffic['population_zone_count']} of "
+                    f"{traffic['populated_node_count']} populated nodes")
+            if traffic["capacity_source"] == "road_attributes":
+                audit = traffic.get('capacity_audit')
+                if audit:
+                    lines.extend([f"  Capacity defaults: {audit['fallback_arc_pct']:.3f}% of directed arcs",
+                        '  Capacity rules: ' + str(audit['by_rule']), '  ' + audit['interpretation']])
+                coverage = traffic["capacity_tag_coverage"]
+                lines.append(f"  Capacity tags (directed arcs): lanes={coverage['lanes_tagged']}, "
+                    f"width-only={coverage['width_tagged']}, defaults={coverage['fallback']}, "
+                    f"invalid tags={coverage['invalid_tag_arcs']}")
     return "\n".join(lines) + "\n"

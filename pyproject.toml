@@ -15,7 +15,11 @@ dependencies = [
 
 [project.optional-dependencies]
 test = ["pytest>=8"]
+accelerated = ["networkit>=11,<12"]
 closure-simulation = ["xarray==2025.1.2", "netCDF4==1.7.2", "pykrige==1.7.2"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
 
 [project.scripts]
 georesilience = "georesilience.cli:main"

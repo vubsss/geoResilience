@@ -12,6 +12,7 @@ import numpy as np
 from .links import _link_rows
 from .removal import ActiveEdgeGraph
 from .shortest_paths import ShortestPathEngine
+from .progress import StageProgress
 
 POPULATION_REASON = "no population on distinct origin-destination nodes"
 
@@ -100,11 +101,21 @@ def evaluate_matrix(matrix, universe, *, half_distance_km=2, cutoff_factor=5, n_
         float(universe.weights @ values[:, 5] / denominator_pop) if denominator_pop > 0 else None)
 
 
-def compute_baseline(graph, population, **kwargs):
+def compute_baseline(graph, population, *, edge_costs=None, **kwargs):
     universe = PairUniverse(population)
     if universe.n != len(graph):
         raise ValueError("population must match the original node count")
-    topology = ActiveEdgeGraph(graph, _link_rows(graph), directed=True)
+    links = _link_rows(graph)
+    working = graph
+    if edge_costs is not None:
+        working = graph.copy()
+        for edge in working.edges(keys=True):
+            if edge[0] != edge[1]:
+                value = float(edge_costs[edge])
+                if not math.isfinite(value) or value <= 0:
+                    raise ValueError('routing costs must be finite positive seconds')
+                working.edges[edge]['length'] = value
+    topology = ActiveEdgeGraph(working, links, directed=True)
     snapshot = evaluate_matrix(topology.csr(), universe, **kwargs)
     return Baseline(**snapshot.__dict__, topology=topology)
 
@@ -144,11 +155,29 @@ def _structural(graph, links):
             continue
         u, v = row["_u"], row["_v"]
         pair_links.setdefault(frozenset((u, v)), []).append(row["link_id"])
-        candidate = (row["length_m"], row["link_id"])
+        cost = row.get('_routing_cost', row['length_m'])
+        candidate = (cost, row["link_id"])
         if not simple.has_edge(u, v) or candidate < (simple[u][v]["length"], simple[u][v]["link_id"]):
-            simple.add_edge(u, v, length=row["length_m"], link_id=row["link_id"])
-    nodes = nx.betweenness_centrality(simple, weight="length", normalized=True)
-    edge_scores = nx.edge_betweenness_centrality(simple, weight="length", normalized=True)
+            simple.add_edge(u, v, length=cost, link_id=row["link_id"])
+    # Same exact weighted Brandes measure, with optional native acceleration.
+    try:
+        import networkit as nk
+    except ImportError:
+        nk = None
+    if nk is not None and len(simple) > 100:
+        ordered = list(simple)
+        index = {node: i for i, node in enumerate(ordered)}
+        native = nk.Graph(len(ordered), weighted=True, directed=False)
+        for u, v, data in simple.edges(data=True):
+            native.addEdge(index[u], index[v], data['length'])
+        native.indexEdges()
+        result = nk.centrality.Betweenness(native, normalized=True, computeEdgeCentrality=True).run()
+        nodes = dict(zip(ordered, result.scores()))
+        edge_values = result.edgeScores()
+        edge_scores = {(u, v): edge_values[native.edgeId(index[u], index[v])] for u, v in simple.edges}
+    else:
+        nodes = nx.betweenness_centrality(simple, weight="length", normalized=True)
+        edge_scores = nx.edge_betweenness_centrality(simple, weight="length", normalized=True)
     betweenness = {row["link_id"]: None if row["is_self_loop"] else 0.0 for row in links}
     for (u, v), value in edge_scores.items():
         betweenness[simple[u][v]["link_id"]] = float(value)
@@ -179,12 +208,16 @@ CONSEQUENCE_FIELDS = tuple(field + suffix for field in (
     "efficiency_drop", "accessibility_drop", "disconnected_pair_fraction") for suffix in ("", "_pop"))
 
 
-def compute_link_consequences(graph, population, *, coverage="screened", candidate_limit=250, service_nodes=(), **settings):
+def compute_link_consequences(graph, population, *, coverage="screened", candidate_limit=250, service_nodes=(), edge_costs=None, **settings):
     import networkx as nx
     if coverage not in {"screened", "all"} or candidate_limit < 0:
         raise ValueError("coverage must be screened or all; candidate_limit must be nonnegative")
-    baseline = compute_baseline(graph, population, **settings)
+    baseline = compute_baseline(graph, population, edge_costs=edge_costs, **settings)
     links = _link_rows(graph)
+    if edge_costs is not None:
+        for row in links:
+            if not row['is_self_loop']:
+                row['_routing_cost'] = math.fsum(edge_costs[e] for e in row['_edges']) / len(row['_edges'])
     node_b, edge_b, bridges, articulations = _structural(graph, links)
     nodes = {}
     for i, node in enumerate(graph):
@@ -202,15 +235,17 @@ def compute_link_consequences(graph, population, *, coverage="screened", candida
         row.update(edge_betweenness=edge_b[key], is_bridge=key in bridges, null_reasons={})
         ratio = None
         if not row["is_self_loop"]:
-            removed = set(row["_edges"])
-            view = nx.subgraph_view(graph, filter_edge=lambda u, v, k: (u, v, k) not in removed)
-            alternatives = []
-            for u, v in dict.fromkeys((u, v) for u, v, _ in row["_edges"]):
-                try:
-                    alternatives.append(nx.shortest_path_length(view, u, v, weight="length"))
-                except nx.NetworkXNoPath:
-                    alternatives.append(math.inf)
-            ratio = max(alternatives) / row["length_m"]
+            from scipy.sparse.csgraph import dijkstra
+            directions = {}
+            for u, v, k in row['_edges']:
+                cost = edge_costs[u, v, k] if edge_costs is not None else float(graph.edges[u, v, k]['length'])
+                directions[u, v] = min(directions.get((u, v), math.inf), cost)
+            origins = list(dict.fromkeys(u for u, v in directions))
+            after = dijkstra(baseline.topology.csr(removed_links=[row['link_id']]), directed=True,
+                             indices=[baseline.topology.index[u] for u in origins])
+            # Preserve the original distance convention; time costs use a direction-specific denominator.
+            ratio = max(after[origins.index(u), baseline.topology.index[v]] /
+                        (cost if edge_costs is not None else row['length_m']) for (u, v), cost in directions.items())
         row["detour_ratio"] = _finite(ratio)
         row["detour_none"] = bool(ratio is not None and math.isinf(ratio))
         if row["detour_ratio"] is None:
@@ -228,22 +263,25 @@ def compute_link_consequences(graph, population, *, coverage="screened", candida
     service_nodes = set(service_nodes)
     candidates.update(row["link_id"] for row in active
                       if row["_u"] in service_nodes or row["_v"] in service_nodes)
-    for row in links:
-        row["evaluated"] = row["link_id"] in candidates
-        if row["evaluated"]:
-            damaged = evaluate_matrix(baseline.topology.csr(removed_links=[row["link_id"]]), baseline.universe, **settings)
-            values, reasons = _consequence_fields(baseline, damaged)
-            row.update(values)
-            row["null_reasons"].update(reasons)
-        else:
-            row.update(dict.fromkeys(CONSEQUENCE_FIELDS))
-            reason = "self-loop excluded" if row["is_self_loop"] else "not evaluated in screened coverage"
-            row["null_reasons"].update(dict.fromkeys(CONSEQUENCE_FIELDS, reason))
+    with StageProgress("Link removal consequences", len(candidates)) as progress:
+        for row in links:
+            row["evaluated"] = row["link_id"] in candidates
+            if row["evaluated"]:
+                damaged = evaluate_matrix(baseline.topology.csr(removed_links=[row["link_id"]]), baseline.universe, **settings)
+                values, reasons = _consequence_fields(baseline, damaged)
+                row.update(values)
+                row["null_reasons"].update(reasons)
+                progress.advance()
+            else:
+                row.update(dict.fromkeys(CONSEQUENCE_FIELDS))
+                reason = "self-loop excluded" if row["is_self_loop"] else "not evaluated in screened coverage"
+                row["null_reasons"].update(dict.fromkeys(CONSEQUENCE_FIELDS, reason))
     finite = [row["detour_ratio"] for row in active if row["detour_ratio"] is not None]
     redundancy = {
         "bridge_redundancy": score(1 - len(bridges) / len(active) if active else None,
             "1 - bridge_count / non_self_loop_link_count", "no non-self-loop links", bridge_count=len(bridges), link_count=len(active)),
         "detour_redundancy": score(float(np.median(finite)) if finite else None,
+            "median finite directed alternative-time / same-direction intact road time" if edge_costs is not None else
             "median finite directed alternative-distance / physical-link length", "no finite alternatives", finite_count=len(finite)),
         "detour_no_alternative_share": score(sum(row["detour_none"] for row in active) / len(active) if active else None,
             "share of non-self-loop links with no alternative in at least one original direction", "no non-self-loop links")}
@@ -265,24 +303,26 @@ def add_node_consequences(result, *, coverage="screened", candidate_limit=300, s
     candidates = (set(ordered) if coverage == "all" else set(ranked[:candidate_limit])
                   | {node for node in ordered if result.nodes[node]["is_articulation"]})
     candidates.update(set(service_nodes) & set(ordered))
-    for index, node in enumerate(ordered):
-        row = result.nodes[node]
-        row["evaluated"] = node in candidates
-        if row["evaluated"]:
-            matrix = result.baseline.topology.csr(isolated_nodes=[index])
-            damaged = evaluate_matrix(matrix, result.baseline.universe, **result.settings)
-            values, reasons = _consequence_fields(result.baseline, damaged)
-            for suffix in ("", "_pop"):
-                values["information_centrality" + suffix] = values.pop("efficiency_drop" + suffix)
-                if "efficiency_drop" + suffix in reasons:
-                    reasons["information_centrality" + suffix] = reasons.pop("efficiency_drop" + suffix)
-            row.update(values)
-            row["null_reasons"].update(reasons)
-        else:
-            fields = [field + suffix for field in ("information_centrality", "accessibility_drop",
-                       "disconnected_pair_fraction") for suffix in ("", "_pop")]
-            row.update(dict.fromkeys(fields))
-            row["null_reasons"].update(dict.fromkeys(fields, "not evaluated in screened coverage"))
+    with StageProgress("Node isolation consequences", len(candidates)) as progress:
+        for index, node in enumerate(ordered):
+            row = result.nodes[node]
+            row["evaluated"] = node in candidates
+            if row["evaluated"]:
+                matrix = result.baseline.topology.csr(isolated_nodes=[index])
+                damaged = evaluate_matrix(matrix, result.baseline.universe, **result.settings)
+                values, reasons = _consequence_fields(result.baseline, damaged)
+                for suffix in ("", "_pop"):
+                    values["information_centrality" + suffix] = values.pop("efficiency_drop" + suffix)
+                    if "efficiency_drop" + suffix in reasons:
+                        reasons["information_centrality" + suffix] = reasons.pop("efficiency_drop" + suffix)
+                row.update(values)
+                row["null_reasons"].update(reasons)
+                progress.advance()
+            else:
+                fields = [field + suffix for field in ("information_centrality", "accessibility_drop",
+                           "disconnected_pair_fraction") for suffix in ("", "_pop")]
+                row.update(dict.fromkeys(fields))
+                row["null_reasons"].update(dict.fromkeys(fields, "not evaluated in screened coverage"))
     result.coverage["nodes"] = {"mode": coverage, "evaluated": len(candidates), "total": len(ordered),
         "ids": [str(node) for node in ordered if node in candidates],
         "method": "all retained nodes" if coverage == "all" else f"top {candidate_limit} by betweenness and all articulation points"}
@@ -292,7 +332,7 @@ def add_node_consequences(result, *, coverage="screened", candidate_limit=300, s
 
 
 def compute_local_metrics(graph, population, *, coverage="screened", link_candidate_limit=250,
-                          node_candidate_limit=300, service_nodes=(), **settings):
+                          node_candidate_limit=300, service_nodes=(), edge_costs=None, **settings):
     result = compute_link_consequences(graph, population, coverage=coverage,
-                                      candidate_limit=link_candidate_limit, service_nodes=service_nodes, **settings)
+                                      candidate_limit=link_candidate_limit, service_nodes=service_nodes, edge_costs=edge_costs, **settings)
     return add_node_consequences(result, coverage=coverage, candidate_limit=node_candidate_limit, service_nodes=service_nodes)
