@@ -1,7 +1,8 @@
 """Prepare reproducible study JSONs from the user's original Hyderabad archives.
 
-Run from repository root. Does not fabricate a population raster or capacities.
-Existing original road/population exports and audited traffic OD files are inputs.
+Run from repository root. Reuses original population counts and audited OD demand.
+Capacities are freshly inferred from available road tags with disclosed defaults;
+they are not measured capacities or copies of the earlier pilot's capacity CSV.
 """
 import csv
 import io
@@ -62,10 +63,12 @@ def main():
             'capacity': '1 assumed unit per institution; no measured beds/seats',
             'footprint_warning': 'Gachibowli upload misses northern strip of original box; supply census incomplete'}, indent=2)+'\n')
         base = ROOT/f'results/traffic_validation_v2/fresh_assignment/{city}/base'
-        with (base/'traffic_arcs.csv').open(newline='') as stream:
-            arcs = list(csv.DictReader(stream))
+        from georesilience.traffic import canonical_traffic_graph, _road_capacities
+        from georesilience.config import TrafficConfig
+        fixed, _ = canonical_traffic_graph(graph, SPEEDS)
+        inferred, _, _ = _road_capacities([(u, v, k, d) for u, v, k, d in fixed.edges(keys=True, data=True) if u != v], TrafficConfig())
         capacities = folder/f'{city}_capacities.csv'
-        save_csv(capacities, [{k: r[k] for k in ('u', 'v', 'key', 'capacity_pcu_h')} for r in arcs])
+        save_csv(capacities, [dict(u=u, v=v, key=k, capacity_pcu_h=value) for (u, v, k), value in inferred.items()])
         boundary = folder/f'{city}_boundary.geojson'
         from shapely.geometry import box
         gpd.GeoDataFrame(geometry=[box(west, south, east, north)], crs=4326).to_file(boundary, driver='GeoJSON')
@@ -78,7 +81,7 @@ def main():
             'travel_time': {'samples': 64, 'highway_speeds_kph': SPEEDS},
             'reliability': {'samples': 64},
             'traffic': {'enabled': True, 'source': 'assignment', 'demand_source': 'od_csv',
-                'od_csv': str(base/'input_od.csv'), 'capacity_csv': str(capacities),
+                'od_csv': str(base/'input_od.csv'),
                 'reassign_failures': True, 'relative_gap': .001, 'max_iterations': 600},
             'services': {'facilities_csv': str(facilities), 'mode': 'sfca',
                 'school': {'catchment_minutes': 10, 'capacity_unit': 'assumed_school_capacity_units'},

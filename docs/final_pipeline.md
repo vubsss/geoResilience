@@ -9,6 +9,11 @@ Population affects both traffic demand and outcome aggregation. These answer
 different questions: how many trips load the roads, and how many residents are
 affected by the resulting service. Neither is observed travel demand by default.
 
+Road-capacity interpretation and actual tag/default coverage are documented in
+[the capacity audit](traffic/capacity_audit.md). Road-attribute mode exports the
+chosen per-arc capacity rules and assumptions; inferred capacities are not
+measured observations.
+
 ## Run one complete study
 
 ```sh

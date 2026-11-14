@@ -194,7 +194,8 @@ def test_physical_closure_reassignment_and_disconnection(tmp_path):
     assert closed["delta_tstt_pcu_hours"] is None
 
 
-def test_pipeline_exports_traffic_and_uses_congested_times(tmp_path):
+@pytest.mark.parametrize('capacity_mode', ['uniform', 'road_attributes'])
+def test_pipeline_exports_traffic_and_uses_congested_times(tmp_path, capacity_mode):
     import geopandas as gpd
     import json
     import osmnx as ox
@@ -225,7 +226,8 @@ def test_pipeline_exports_traffic_and_uses_congested_times(tmp_path):
         analysis={"n_jobs": 1, "max_memory_gb": .1},
         robustness={"fraction": .5, "steps": 1},
         reliability={"samples": 32}, travel_time={"samples": 32},
-        traffic={"enabled": True, "od_csv": od, "capacity_pcu_h": 100,
+        traffic={"enabled": True, "od_csv": od, "capacity_pcu_h": 100 if capacity_mode == 'uniform' else None,
+                 "road_capacity_pcu_h_per_lane": 100,
                  "closure_top_n": 1},
         output={"dir": tmp_path / "results", "figures": False})
     summary = run(config)
@@ -237,5 +239,10 @@ def test_pipeline_exports_traffic_and_uses_congested_times(tmp_path):
     arcs = gpd.read_file(config.output.dir / "network.gpkg", layer="traffic_arcs")
     assert len(arcs) == 6
     assert arcs.congested_time_s.max() == pytest.approx(69)
+    if capacity_mode == 'road_attributes':
+        assert summary['traffic']['capacity_audit']['fallback_arc_pct'] == 100
+        assert set(arcs.capacity_rule) == {'configured_default_per_direction'}
+        assert set(arcs.capacity_source) == {'default_lanes'}
+        assert all(json.loads(v) == {} for v in arcs.capacity_raw_tags)
     manifest = json.loads((config.output.dir / "run_manifest.json").read_text())
     assert manifest["resolved_config"]["traffic"]["enabled"]

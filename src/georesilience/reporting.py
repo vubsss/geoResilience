@@ -121,6 +121,10 @@ def build_report(summary):
                 lines.append(f"  Population zones: {traffic['population_zone_count']} of "
                     f"{traffic['populated_node_count']} populated nodes")
             if traffic["capacity_source"] == "road_attributes":
+                audit = traffic.get('capacity_audit')
+                if audit:
+                    lines.extend([f"  Capacity defaults: {audit['fallback_arc_pct']:.3f}% of directed arcs",
+                        '  Capacity rules: ' + str(audit['by_rule']), '  ' + audit['interpretation']])
                 coverage = traffic["capacity_tag_coverage"]
                 lines.append(f"  Capacity tags (directed arcs): lanes={coverage['lanes_tagged']}, "
                     f"width-only={coverage['width_tagged']}, defaults={coverage['fallback']}, "

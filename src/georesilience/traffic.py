@@ -25,9 +25,12 @@ class TrafficResult:
 def canonical_traffic_graph(graph, speeds=None):
     """Resolve simplified mixed tags conservatively without changing road identity."""
     from .time_models import _parsed_speed
+    from .traffic_capacity import CAPACITY_TAGS
     result = graph.copy()
     changed = 0
     for _, _, _, data in result.edges(keys=True, data=True):
+        data['_traffic_capacity_tags'] = data.get('_traffic_capacity_tags',
+            {field: data[field] for field in CAPACITY_TAGS if field in data})
         for field in ('lanes', 'width', 'maxspeed', 'highway'):
             raw = data.get(field)
             if not isinstance(raw, (list, tuple, set)):
@@ -244,41 +247,8 @@ def _tag_number(value):
 
 
 def _road_capacities(arcs, config):
-    capacities, attributes, counts = {}, {}, {
-        "lanes_tagged": 0, "width_tagged": 0, "fallback": 0, "invalid_tag_arcs": 0}
-    for u, v, key, data in arcs:
-        width_tag_value, lanes_tag_value = data.get("width"), data.get("lanes")
-        width, lanes = _tag_number(width_tag_value), _tag_number(lanes_tag_value)
-        invalid_tag = ((width_tag_value not in (None, "") and (width is None or width <= 0)) or
-                       (lanes_tag_value not in (None, "") and (lanes is None or lanes <= 0)))
-        if invalid_tag:
-            counts["invalid_tag_arcs"] += 1
-        width = width if width is not None and width > 0 else None
-        lanes = lanes if lanes is not None and lanes > 0 else None
-        one_way = str(data.get("oneway", "")).lower() in {"yes", "true", "1", "-1"}
-        direction_factor = 1 if one_way else 0.5
-        width_tag = str(data.get("width", "")).lower()
-        if width is not None and ("ft" in width_tag or "feet" in width_tag or "'" in width_tag):
-            width *= 0.3048
-        if lanes is not None:
-            directional_lanes = lanes * direction_factor
-            counts["lanes_tagged"] += 1
-            source = "lanes_tag"
-        elif width is not None:
-            directional_lanes = width / config.lane_width_m * direction_factor
-            counts["width_tagged"] += 1
-            source = "width_inferred_lanes"
-        else:
-            directional_lanes = config.default_lanes_per_direction
-            counts["fallback"] += 1
-            source = "default_lanes"
-        if directional_lanes <= 0:
-            raise ValueError(f"traffic: road edge {(u, v, key)!r} has no positive effective lanes")
-        edge = (u, v, key)
-        capacities[edge] = directional_lanes * config.road_capacity_pcu_h_per_lane
-        attributes[edge] = {"width_m": width, "lanes_tag": lanes,
-                            "effective_lanes": directional_lanes, "capacity_source": source}
-    return capacities, attributes, counts
+    from .traffic_capacity import infer_capacities
+    return infer_capacities(arcs, config)
 
 
 def _travel_times(free_flow, capacity, volume, vdf, alpha, beta):
@@ -429,6 +399,8 @@ def prepare_traffic(graph, config, free_flow_seconds=None, population=None):
                    "demand_source": config.demand_source,
                    "capacity_source": capacity_source}
         if capacity_source == "road_attributes":
+            from .traffic_capacity import capacity_audit
+            summary['capacity_audit'] = capacity_audit(capacity_attributes)
             summary["capacity_tag_coverage"] = tag_counts
             summary["road_capacity_pcu_h_per_lane"] = config.road_capacity_pcu_h_per_lane
             summary["default_lanes_per_direction"] = config.default_lanes_per_direction
@@ -501,9 +473,10 @@ def evaluate_closures(graph, links, result, free_flow_seconds, config):
 
 
 def write_traffic_csv(result, path):
+    from .traffic_capacity import AUDIT_FIELDS
     fields = ["u", "v", "key", "free_flow_time_s", "capacity_pcu_h", "assigned_volume_pcu_h",
               "vc_ratio", "congested_time_s", "delay_s", "width_m", "lanes_tag",
-              "effective_lanes", "capacity_source"]
+                "effective_lanes", "capacity_source", *AUDIT_FIELDS]
     with Path(path).open("w", newline="", encoding="utf-8") as stream:
         writer = csv.DictWriter(stream, fieldnames=fields)
         writer.writeheader()
