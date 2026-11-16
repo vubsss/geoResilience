@@ -7,7 +7,10 @@ from pathlib import Path
 def calculate_composites(summary, config):
     weights = config.weights.model_dump()
     results = {}
-    for view in ('population_weighted', 'unweighted'):
+    views = ['population_weighted', 'unweighted']
+    if 'node_importance_weighted' in summary:
+        views.append('node_importance_weighted')
+    for view in views:
         measures = summary[view]
         redundancy = summary['unweighted']
         ratio = redundancy['detour_redundancy']['value']
@@ -40,6 +43,13 @@ def calculate_composites(summary, config):
                 'accessibility': 'normalized ordinary Hansen',
                 'reliability': 'fractions of original ordered pairs, equal or population-product weights'},
             'facility_metrics': 'reported separately; not included in this index'}
+        if view == 'node_importance_weighted':
+            results[view]['normalization'].update(
+                accessibility='normalized Hansen with combined importance at origins and destinations',
+                reliability='fractions of original distinct ordered pairs weighted by combined importance products I_i*I_j')
+            results[view]['facility_metrics'] = (
+                'school/hospital points included through combined node importance in attack, accessibility and reliability; '
+                'bridge/detour remain structural; capacity-based 2SFCA reported separately')
     return results
 
 

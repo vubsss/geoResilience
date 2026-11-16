@@ -28,7 +28,7 @@ class CleaningConfig(StrictModel):
 
 
 class AnalysisConfig(StrictModel):
-    default_view: Literal["population_weighted", "unweighted"] = "population_weighted"
+    default_view: Literal["population_weighted", "unweighted", "node_importance_weighted"] = "population_weighted"
     seed: int = Field(default=42, ge=0)
     n_jobs: Annotated[int, Field(ge=1)] | Literal["auto"] = "auto"
     max_memory_gb: Annotated[float, Field(gt=0, allow_inf_nan=False)] | Literal["auto"] = "auto"
@@ -171,12 +171,14 @@ class PopulationConfig(StrictModel):
 
 
 class CompositeWeights(StrictModel):
-    bridge: float = Field(default=.15, ge=0, allow_inf_nan=False)
-    detour: float = Field(default=.15, ge=0, allow_inf_nan=False)
+    """Four equal categories, split equally among each category's metrics."""
+
+    bridge: float = Field(default=.125, ge=0, allow_inf_nan=False)
+    detour: float = Field(default=.125, ge=0, allow_inf_nan=False)
     attack: float = Field(default=.25, ge=0, allow_inf_nan=False)
-    accessibility: float = Field(default=.15, ge=0, allow_inf_nan=False)
-    travel_time_reliability: float = Field(default=.15, ge=0, allow_inf_nan=False)
-    connectivity_reliability: float = Field(default=.15, ge=0, allow_inf_nan=False)
+    accessibility: float = Field(default=.25, ge=0, allow_inf_nan=False)
+    travel_time_reliability: float = Field(default=.125, ge=0, allow_inf_nan=False)
+    connectivity_reliability: float = Field(default=.125, ge=0, allow_inf_nan=False)
 
     @model_validator(mode="after")
     def sum_to_one(self):
@@ -239,3 +241,9 @@ class RunConfig(StrictModel):
     population: PopulationConfig = Field(default_factory=PopulationConfig)
     services: ServicesConfig | None = None
     output: OutputConfig = Field(default_factory=OutputConfig)
+
+    @model_validator(mode='after')
+    def validate_importance_view(self):
+        if self.analysis.default_view == 'node_importance_weighted' and self.services is None:
+            raise ValueError('node_importance_weighted requires facilities to calculate combined node importance')
+        return self

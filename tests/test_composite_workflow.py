@@ -29,8 +29,13 @@ def sample_summary():
 def test_default_composite_known_answer_and_custom_weights():
     summary = sample_summary()
     actual = calculate_composites(summary, CompositeConfig())['population_weighted']
-    assert actual['value'] == pytest.approx(.25*.5 + .15*(.75+.5+.6+.8+.9))
+    assert actual['value'] == pytest.approx(.25*((.75+.5)/2 + .5 + .6 + (.8+.9)/2))
     assert actual['components']['attack'] == .5  # raw AUC is normalized by horizon
+    # Recorded coefficients remain authoritative when replaying older studies.
+    legacy = dict.fromkeys(CompositeWeights.model_fields, .15)
+    legacy['attack'] = .25
+    historical = calculate_composites(summary, CompositeConfig(weights=legacy))['population_weighted']
+    assert historical['value'] == pytest.approx(.25*.5 + .15*(.75+.5+.6+.8+.9))
     weights = dict.fromkeys(CompositeWeights.model_fields, 0.)
     weights['accessibility'] = 1.
     assert calculate_composites(summary, CompositeConfig(weights=weights))['population_weighted']['value'] == .6
@@ -49,6 +54,20 @@ def test_missing_positive_weight_component_is_not_silently_renormalized():
     summary['population_weighted']['travel_time_reliability']['value'] = None
     result = calculate_composites(summary, CompositeConfig())['population_weighted']
     assert result['value'] is None and 'travel_time_reliability' in result['reason']
+
+
+def test_importance_composite_uses_importance_components_with_structural_redundancy():
+    summary = sample_summary()
+    summary['node_importance_weighted'] = {key: {'value': value} for key, value in {
+        'targeted_attack_robustness': .08, 'hansen_accessibility': .3,
+        'travel_time_reliability': .7, 'connectivity_reliability': .8}.items()}
+    result = calculate_composites(summary, CompositeConfig())['node_importance_weighted']
+    assert result['value'] == pytest.approx(.25*((.75+.5)/2 + .4 + .3 + (.7+.8)/2))
+    summary['population']['basis'] = 'uniform_node_demand'
+    assert calculate_composites(summary, CompositeConfig())['node_importance_weighted']['value'] == result['value']
+    summary['node_importance_weighted']['travel_time_reliability']['value'] = None
+    missing = calculate_composites(summary, CompositeConfig())['node_importance_weighted']
+    assert missing['value'] is None and 'travel_time_reliability' in missing['reason']
 
 
 def test_saved_population_replays_ids_and_checks_coordinates(tmp_path):
@@ -85,7 +104,8 @@ def test_reassignment_captures_congestion_and_counts_disconnected_demand():
     assert result.demand == demand
 
 
-def test_configured_full_workflow_uses_saved_population_facilities_and_custom_weights(tmp_path):
+@pytest.mark.parametrize('view', ['population_weighted', 'node_importance_weighted'])
+def test_configured_full_workflow_uses_saved_population_facilities_and_custom_weights(tmp_path, view):
     from tests.test_service_pipeline import service_input
     from georesilience.workflow import run_study
     from georesilience.pipeline import run
@@ -107,11 +127,12 @@ def test_configured_full_workflow_uses_saved_population_facilities_and_custom_we
     values['services'] = {'facilities_csv': str(facilities), 'mode': 'sfca',
         'school': {'catchment_minutes': 10}, 'hospital': {'catchment_minutes': 10}}
     values['composite'] = {'weights': weights}
+    values['analysis']['default_view'] = view
     values['output']['dir'] = str(tmp_path/'study')
     config.write_text(json.dumps({'run': values}))
     result = run_study(config)
-    assert result['default_view'] == 'population_weighted'
-    assert result['headline']['value'] == result['population_weighted']['hansen_accessibility']['value']
+    assert result['default_view'] == view
+    assert result['headline']['value'] == result[view]['hansen_accessibility']['value']
     assert result['traffic']['failure_reassignment']['all_converged']
     assert result['services']['sfca']['school']['status'] == 'computed'
     assert (tmp_path/'study/analysis/traffic_failure_states.csv').is_file()

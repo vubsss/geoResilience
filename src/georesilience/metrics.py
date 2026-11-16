@@ -4,7 +4,7 @@ All consequences use directed paths and the original node/pair denominators.
 Population products are a resident-to-resident demand proxy, not observed trips.
 """
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 import math
 
 import numpy as np
@@ -15,10 +15,11 @@ from .shortest_paths import ShortestPathEngine
 from .progress import StageProgress
 
 POPULATION_REASON = "no population on distinct origin-destination nodes"
+IMPORTANCE_REASON = "no combined node importance on distinct origin-destination nodes"
 
 
 class PairUniverse:
-    def __init__(self, population):
+    def __init__(self, population, *, node_importance=None):
         population = np.asarray(population, dtype=float)
         if population.ndim != 1 or not np.isfinite(population).all() or (population < 0).any():
             raise ValueError("population weights must be finite, nonnegative and one-dimensional")
@@ -34,6 +35,9 @@ class PairUniverse:
         self.destination_weights = (np.r_[0., np.cumsum(self.weights[:-1])]
             + np.r_[np.cumsum(self.weights[:0:-1])[::-1], 0.]) if self.n else np.array([])
         self.denominator_pop = float(self.weights @ self.destination_weights)
+        self.importance = PairUniverse(node_importance) if node_importance is not None else None
+        if self.importance is not None and self.importance.n != self.n:
+            raise ValueError("node importance must match the original node count")
 
 
 @dataclass
@@ -47,6 +51,10 @@ class MetricsSnapshot:
     accessibility_pop: float | None
     reachable_fraction: float | None
     reachable_fraction_pop: float | None
+    node_hansen_importance: np.ndarray | None = field(default=None, kw_only=True)
+    efficiency_importance: float | None = field(default=None, kw_only=True)
+    accessibility_importance: float | None = field(default=None, kw_only=True)
+    reachable_fraction_importance: float | None = field(default=None, kw_only=True)
 
 
 @dataclass
@@ -67,8 +75,12 @@ class _PairReducer:
         inverse = np.divide(1., distances, out=np.zeros_like(distances), where=reachable & (distances > 0))
         decay = np.exp(-self.beta * distances)
         decay[distances > self.cutoff] = 0
-        return np.column_stack((inverse.sum(axis=1), inverse @ u.weights,
-            decay.sum(axis=1), decay @ u.weights, reachable.sum(axis=1), reachable @ u.weights))
+        columns = [inverse.sum(axis=1), inverse @ u.weights,
+            decay.sum(axis=1), decay @ u.weights, reachable.sum(axis=1), reachable @ u.weights]
+        if u.importance is not None:
+            columns.extend((inverse @ u.importance.weights, decay @ u.importance.weights,
+                            reachable @ u.importance.weights))
+        return np.column_stack(columns)
 
 
 def evaluate_matrix(matrix, universe, *, half_distance_km=2, cutoff_factor=5, n_jobs=1, budget_bytes=2**26):
@@ -83,7 +95,7 @@ def evaluate_matrix(matrix, universe, *, half_distance_km=2, cutoff_factor=5, n_
         raise ValueError("memory budget too small for one shortest-path row")
     n_jobs = min(n_jobs, max(1, n), max(1, budget_bytes // (max(1, n) * 8 * 8)))
     engine = ShortestPathEngine(matrix, n_jobs=n_jobs, budget_bytes=budget_bytes // 3)
-    values = np.zeros((n, 6))
+    values = np.zeros((n, 9 if universe.importance is not None else 6))
     reducer = _PairReducer(universe, math.log(2) / half_m, half_m * cutoff_factor)
     for sources, reduced in engine.reduce(np.arange(n), reducer, directed=True):
         values[sources] = reduced
@@ -93,16 +105,28 @@ def evaluate_matrix(matrix, universe, *, half_distance_km=2, cutoff_factor=5, n_
     denominator, denominator_pop = universe.denominator, universe.denominator_pop
     weighted_access = (float(universe.weights @ np.nan_to_num(hp))
         if denominator_pop > 0 and np.isfinite(hp[universe.weights > 0]).all() else None)
+    importance_metrics = {}
+    if universe.importance is not None:
+        iu = universe.importance
+        hi = np.divide(values[:, 7], iu.destination_weights, out=np.full(n, np.nan),
+                       where=iu.destination_weights > 0)
+        importance_metrics = dict(node_hansen_importance=hi,
+            efficiency_importance=float(iu.weights @ values[:, 6] / iu.denominator_pop) if iu.denominator_pop > 0 else None,
+            accessibility_importance=float(iu.weights @ np.nan_to_num(hi))
+                if iu.denominator_pop > 0 and np.isfinite(hi[iu.weights > 0]).all() else None,
+            reachable_fraction_importance=float(iu.weights @ values[:, 8] / iu.denominator_pop)
+                if iu.denominator_pop > 0 else None)
     return MetricsSnapshot(universe, h, hp,
         float(values[:, 0].sum() / denominator) if denominator else None,
         float(universe.weights @ values[:, 1] / denominator_pop) if denominator_pop > 0 else None,
         float(h.mean()) if n > 1 else None, weighted_access,
         float(values[:, 4].sum() / denominator) if denominator else None,
-        float(universe.weights @ values[:, 5] / denominator_pop) if denominator_pop > 0 else None)
+        float(universe.weights @ values[:, 5] / denominator_pop) if denominator_pop > 0 else None,
+        **importance_metrics)
 
 
-def compute_baseline(graph, population, *, edge_costs=None, **kwargs):
-    universe = PairUniverse(population)
+def compute_baseline(graph, population, *, edge_costs=None, node_importance=None, **kwargs):
+    universe = PairUniverse(population, node_importance=node_importance)
     if universe.n != len(graph):
         raise ValueError("population must match the original node count")
     links = _link_rows(graph)
@@ -186,21 +210,26 @@ def _structural(graph, links):
     return nodes, betweenness, bridges, set(nx.articulation_points(simple))
 
 
+def _weight_suffixes(baseline):
+    return ("", "_pop", "_importance") if baseline.universe.importance is not None else ("", "_pop")
+
+
 def _consequence_fields(baseline, damaged):
     values = {}
     reasons = {}
-    for suffix in ("", "_pop"):
+    for suffix in _weight_suffixes(baseline):
+        weight_reason = IMPORTANCE_REASON if suffix == '_importance' else POPULATION_REASON
         for field, attribute in (("efficiency_drop", "efficiency"), ("accessibility_drop", "accessibility")):
             before, after = getattr(baseline, attribute + suffix), getattr(damaged, attribute + suffix)
             value = relative_drop(before, after)
             values[field + suffix] = value
             if value is None:
-                reasons[field + suffix] = POPULATION_REASON if before is None and suffix else "baseline measure is zero or undefined"
+                reasons[field + suffix] = weight_reason if before is None and suffix else "baseline measure is zero or undefined"
         before, after = getattr(baseline, "reachable_fraction" + suffix), getattr(damaged, "reachable_fraction" + suffix)
         values["disconnected_pair_fraction" + suffix] = (float(np.clip(before - after, 0, 1))
             if before is not None and after is not None else None)
         if before is None:
-            reasons["disconnected_pair_fraction" + suffix] = POPULATION_REASON if suffix else "no distinct node pairs"
+            reasons["disconnected_pair_fraction" + suffix] = weight_reason if suffix else "no distinct node pairs"
     return values, reasons
 
 
@@ -208,11 +237,11 @@ CONSEQUENCE_FIELDS = tuple(field + suffix for field in (
     "efficiency_drop", "accessibility_drop", "disconnected_pair_fraction") for suffix in ("", "_pop"))
 
 
-def compute_link_consequences(graph, population, *, coverage="screened", candidate_limit=250, service_nodes=(), edge_costs=None, **settings):
+def compute_link_consequences(graph, population, *, coverage="screened", candidate_limit=250, service_nodes=(), edge_costs=None, node_importance=None, **settings):
     import networkx as nx
     if coverage not in {"screened", "all"} or candidate_limit < 0:
         raise ValueError("coverage must be screened or all; candidate_limit must be nonnegative")
-    baseline = compute_baseline(graph, population, edge_costs=edge_costs, **settings)
+    baseline = compute_baseline(graph, population, edge_costs=edge_costs, node_importance=node_importance, **settings)
     links = _link_rows(graph)
     if edge_costs is not None:
         for row in links:
@@ -230,6 +259,11 @@ def compute_link_consequences(graph, population, *, coverage="screened", candida
         nodes[node] = {"betweenness": float(node_b[node]), "hansen_accessibility": h,
                        "hansen_accessibility_pop": hp, "is_articulation": node in articulations,
                        "null_reasons": reasons}
+        if baseline.universe.importance is not None:
+            hi = _finite(baseline.node_hansen_importance[i])
+            nodes[node]['hansen_accessibility_importance'] = hi
+            if hi is None:
+                reasons['hansen_accessibility_importance'] = 'no destination node importance outside this node'
     for row in links:
         key = row["link_id"]
         row.update(edge_betweenness=edge_b[key], is_bridge=key in bridges, null_reasons={})
@@ -273,9 +307,11 @@ def compute_link_consequences(graph, population, *, coverage="screened", candida
                 row["null_reasons"].update(reasons)
                 progress.advance()
             else:
-                row.update(dict.fromkeys(CONSEQUENCE_FIELDS))
+                fields = [field + suffix for field in ('efficiency_drop', 'accessibility_drop',
+                    'disconnected_pair_fraction') for suffix in _weight_suffixes(baseline)]
+                row.update(dict.fromkeys(fields))
                 reason = "self-loop excluded" if row["is_self_loop"] else "not evaluated in screened coverage"
-                row["null_reasons"].update(dict.fromkeys(CONSEQUENCE_FIELDS, reason))
+                row["null_reasons"].update(dict.fromkeys(fields, reason))
     finite = [row["detour_ratio"] for row in active if row["detour_ratio"] is not None]
     redundancy = {
         "bridge_redundancy": score(1 - len(bridges) / len(active) if active else None,
@@ -311,7 +347,7 @@ def add_node_consequences(result, *, coverage="screened", candidate_limit=300, s
                 matrix = result.baseline.topology.csr(isolated_nodes=[index])
                 damaged = evaluate_matrix(matrix, result.baseline.universe, **result.settings)
                 values, reasons = _consequence_fields(result.baseline, damaged)
-                for suffix in ("", "_pop"):
+                for suffix in _weight_suffixes(result.baseline):
                     values["information_centrality" + suffix] = values.pop("efficiency_drop" + suffix)
                     if "efficiency_drop" + suffix in reasons:
                         reasons["information_centrality" + suffix] = reasons.pop("efficiency_drop" + suffix)
@@ -320,7 +356,7 @@ def add_node_consequences(result, *, coverage="screened", candidate_limit=300, s
                 progress.advance()
             else:
                 fields = [field + suffix for field in ("information_centrality", "accessibility_drop",
-                           "disconnected_pair_fraction") for suffix in ("", "_pop")]
+                           "disconnected_pair_fraction") for suffix in _weight_suffixes(result.baseline)]
                 row.update(dict.fromkeys(fields))
                 row["null_reasons"].update(dict.fromkeys(fields, "not evaluated in screened coverage"))
     result.coverage["nodes"] = {"mode": coverage, "evaluated": len(candidates), "total": len(ordered),
@@ -332,7 +368,8 @@ def add_node_consequences(result, *, coverage="screened", candidate_limit=300, s
 
 
 def compute_local_metrics(graph, population, *, coverage="screened", link_candidate_limit=250,
-                          node_candidate_limit=300, service_nodes=(), edge_costs=None, **settings):
+                          node_candidate_limit=300, service_nodes=(), edge_costs=None, node_importance=None, **settings):
     result = compute_link_consequences(graph, population, coverage=coverage,
-                                      candidate_limit=link_candidate_limit, service_nodes=service_nodes, edge_costs=edge_costs, **settings)
+                                      candidate_limit=link_candidate_limit, service_nodes=service_nodes, edge_costs=edge_costs,
+                                      node_importance=node_importance, **settings)
     return add_node_consequences(result, coverage=coverage, candidate_limit=node_candidate_limit, service_nodes=service_nodes)

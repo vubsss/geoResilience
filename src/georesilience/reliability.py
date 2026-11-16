@@ -12,7 +12,7 @@ from scipy.sparse.csgraph import connected_components, dijkstra
 
 from .config import TravelTimeConfig
 from .failure_probabilities import probabilities_at_p0
-from .metrics import POPULATION_REASON, PairUniverse
+from .metrics import IMPORTANCE_REASON, POPULATION_REASON, PairUniverse
 from .od import OD_COLUMNS, ODInputs
 from .removal import ActiveEdgeGraph
 from .service_metrics import ServiceUniverse
@@ -51,6 +51,11 @@ def _connectivity(matrix, universe):
     _, labels = connected_components(matrix, directed=True, connection="strong")
     sizes = np.bincount(labels)
     structural = float(np.sum(sizes * (sizes - 1)) / universe.denominator) if universe.denominator else 0.
+    return (structural, _weighted_connectivity(labels, universe)), labels
+
+
+def _weighted_connectivity(labels, universe):
+    sizes = np.bincount(labels)
     weighted = 0.
     if universe.denominator_pop:
         order = np.argsort(labels, kind="stable")
@@ -60,7 +65,7 @@ def _connectivity(matrix, universe):
             if len(weights) > 1:
                 weighted += float(weights @ _exclusive(weights))
         weighted /= universe.denominator_pop
-    return (structural, min(1., max(0., weighted))), labels
+    return min(1., max(0., weighted))
 
 
 
@@ -73,7 +78,7 @@ def _time_success(baseline, damaged, threshold):
 def compute_reliability(graph, links, population, user_probabilities, *, p0=.01, p0_sweep=None,
         connectivity_samples=10000, travel_time_samples=1000, time_threshold=.5, seed=42,
         n_jobs=1, budget_bytes=2**26, time_config=None, time_model=None, od_inputs=None, uniform_samples=None,
-        service_weights=None, prepared_time=None):
+        service_weights=None, prepared_time=None, node_importance=None):
     """Use common per-link uniforms across weighting views, sample counts and p0 scenarios.
 
     Each sample has its own SeedSequence([seed, index]). Ordered reductions make
@@ -87,7 +92,8 @@ def compute_reliability(graph, links, population, user_probabilities, *, p0=.01,
         raise ValueError("time_threshold must be finite and nonnegative")
     if isinstance(seed, bool) or not isinstance(seed, int) or seed < 0:
         raise ValueError("seed must be a nonnegative integer")
-    universe = PairUniverse(population)
+    universe = PairUniverse(population, node_importance=node_importance)
+    importance = universe.importance
     if not universe.n or universe.n != len(graph):
         raise ValueError("population must match a nonempty original graph")
     services = ServiceUniverse(population, service_weights) if service_weights is not None else None
@@ -141,6 +147,8 @@ def compute_reliability(graph, links, population, user_probabilities, *, p0=.01,
             closed = [row["link_id"] for row, state in zip(active, up) if not state]
             event_matrix = topology.csr(removed_links=closed)
             conn, labels = _connectivity(event_matrix, universe)
+            if importance is not None:
+                conn = (*conn, _weighted_connectivity(labels, importance))
             service_conn, service_time = np.zeros(universe.n), np.zeros(universe.n)
             if services is not None and services.reason is None and index < connectivity_samples:
                 for start in range(0, universe.n, chunk_rows):
@@ -148,7 +156,7 @@ def compute_reliability(graph, links, population, user_probabilities, *, p0=.01,
                     reachable = np.isfinite(dijkstra(event_matrix, directed=True, indices=origins))
                     service_conn[origins] = np.sum(reachable * services.destinations, axis=1)
             mutual = np.array([labels[row["_origin"]] == labels[row["_dest"]] for row in pairs], dtype=float)
-            travel, od_time = np.zeros((universe.n, 2)), np.zeros(len(pairs))
+            travel, od_time = np.zeros((universe.n, 3 if importance is not None else 2)), np.zeros(len(pairs))
             if times and index < travel_time_samples:
                 damaged_matrix = times.csr(up, index)
                 for start in range(0, universe.n, chunk_rows):
@@ -165,14 +173,19 @@ def compute_reliability(graph, links, population, user_probabilities, *, p0=.01,
                     travel[origins, 0] = success.sum(axis=1)
                     # Row-wise sums give identical rounding for every chunk size.
                     travel[origins, 1] = np.sum(success * universe.weights, axis=1)
+                    if importance is not None:
+                        travel[origins, 2] = np.sum(success * importance.weights, axis=1)
             tt = (float(travel[:, 0].sum() / universe.denominator) if universe.denominator else 0.,
                   float(universe.weights @ travel[:, 1] / universe.denominator_pop) if universe.denominator_pop else 0.)
+            if importance is not None:
+                tt = (*tt, float(importance.weights @ travel[:, 2] / importance.denominator_pop)
+                      if importance.denominator_pop else 0.)
             service_values = ((float(services.origins @ service_conn), float(services.origins @ service_time))
                 if services is not None else (0., 0.))
             output[name] = (conn, tt, mutual, od_time, service_values)
         return output
 
-    totals = {name: np.zeros((2, 2)) for name in scenarios}
+    totals = {name: np.zeros((2, 3 if importance is not None else 2)) for name in scenarios}
     od_totals = np.zeros((2, len(pairs)))
     service_totals = {name: np.zeros(2) for name in scenarios}
     indices = iter(range(evaluated_samples))
@@ -204,6 +217,12 @@ def compute_reliability(graph, links, population, user_probabilities, *, p0=.01,
             result[group] = {
                 "connectivity_reliability": _score(total[0, column], connectivity_samples, CONNECTIVITY, reason),
                 "travel_time_reliability": _score(total[1, column], travel_time_samples, TRAVEL_TIME, time_reason or reason)}
+        if importance is not None:
+            reason = None if importance.denominator_pop else IMPORTANCE_REASON
+            weighting = '; original combined-importance products I_i*I_j, excluding self-pairs'
+            result['node_importance_weighted'] = {
+                'connectivity_reliability': _score(total[0, 2], connectivity_samples, CONNECTIVITY + weighting, reason),
+                'travel_time_reliability': _score(total[1, 2], travel_time_samples, TRAVEL_TIME + weighting, time_reason or reason)}
         if services is not None:
             result['service_weighted'] = {
                 'directed_reachability_reliability': _score(service_totals[name][0], connectivity_samples,

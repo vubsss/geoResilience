@@ -81,7 +81,8 @@ def main(argv=None):
     closure.add_argument("--layer", help="input road layer (default: edges)")
     closure.add_argument("--failure-template", type=Path, help="fingerprint-bound template for optional analysis CSV")
     closure.add_argument("--overwrite", action="store_true", default=None)
-    analysis.add_argument('--default-view', choices=('population_weighted', 'unweighted'), default='population_weighted')
+    analysis.add_argument('--default-view', choices=('population_weighted', 'unweighted', 'node_importance_weighted'),
+        default='population_weighted', help='headline and map weighting; node_importance_weighted requires --facilities')
     analysis.add_argument('--composite-weight', action='append', metavar='METRIC=FRACTION', help='override weights; resulting six fractions must sum to one')
     analysis.add_argument('--population-nodes', type=Path, help='saved nodes GeoPackage; exact IDs/coordinates required; use instead of population raster')
     analysis.add_argument('--metric-cost', choices=('auto', 'distance', 'time'), default='auto')

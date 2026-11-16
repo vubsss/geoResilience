@@ -126,6 +126,25 @@ Export `node_importance`, `importance_population_component` and
 importance share in the same selected SCC and its raw AUC. Count service weights,
 capacity-based 2SFCA and population-origin demand remain separately interpretable.
 
+Use the existing combined importance directly as node mass in an additional
+`node_importance_weighted` view across Hansen, directed efficiency/reachability,
+node/link removal consequences, information centrality and both reliability
+indices. Distinct ordered pairs use original `I_i*I_j`; Hansen uses destination
+normalization per origin followed by an importance-origin mean. Never recompute
+importance or renormalize surviving mass after failure. Share shortest-path
+evaluations, failure draws and attack order across views. Export local
+`*_importance` fields and explicit unavailable reasons for zero distinct pair
+mass. The six-component importance composite uses these attack, accessibility
+and reliability values with the existing structural bridge/detour components.
+Allow `node_importance_weighted` as the configured headline only when facilities
+are supplied. Existing population/unweighted outputs remain available.
+
+Default composite weights give redundancy, robustness, accessibility and
+reliability 25% each. Split redundancy equally between bridge and detour (12.5%
+each), and reliability between travel-time and connectivity (12.5% each).
+Attack and Hansen accessibility receive 25% each. Explicit configured weights
+override defaults; historical manifests retain their recorded coefficients.
+
 For service-enabled runs a directory may omit the population raster; then each
 retained node receives one uniform demand unit, making the population importance
 component uniform. This is an explicit no-data assumption, never inferred resident

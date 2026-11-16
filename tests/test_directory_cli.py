@@ -90,7 +90,9 @@ def assert_public_summary(summary):
                 assert metric["reason"]
     assert summary['default_view'] == 'population_weighted'
     assert summary['headline'] == summary['composite']['population_weighted']
-    assert summary['headline']['weights']['attack'] == .25
+    assert summary['headline']['weights'] == {
+        'bridge': .125, 'detour': .125, 'attack': .25, 'accessibility': .25,
+        'travel_time_reliability': .125, 'connectivity_reliability': .125}
     assert not REMOVED_FIELDS & summary.keys()
     json.dumps(summary, allow_nan=False)
 

@@ -22,8 +22,8 @@ def write_figures(nodes, edges, attack, summary, folder):
             (edges, "edge_betweenness", "edge_betweenness.png"),
             (nodes, "hansen_accessibility", "hansen_accessibility.png"),
             (nodes, "information_centrality", "information_centrality.png")):
-        if default == 'population_weighted' and column in ('hansen_accessibility', 'information_centrality'):
-            column += '_pop'
+        if column in ('hansen_accessibility', 'information_centrality'):
+            column += {'population_weighted': '_pop', 'node_importance_weighted': '_importance'}.get(default, '')
         fig, ax = plt.subplots(figsize=(7, 6))
         values = frame[column].astype(float)
         if np.isfinite(values).any():
@@ -52,16 +52,19 @@ def write_figures(nodes, edges, attack, summary, folder):
     fig.savefig(folder / "attack_curve.png", dpi=140)
     plt.close(fig)
     fig, ax = plt.subplots(figsize=(7, 4))
-    groups = (default, 'unweighted' if default == 'population_weighted' else 'population_weighted')
+    groups = [default, *(group for group in ('population_weighted', 'unweighted', 'node_importance_weighted')
+                         if group in summary and group != default)]
+    width = .8 / len(groups)
     for offset, group in enumerate(groups):
         for index, name in enumerate(("connectivity_reliability", "travel_time_reliability")):
             metric = summary[group][name]
             if metric["value"] is not None:
                 value = metric["value"]
-                ax.bar(index + offset * .3, value, width=.28, label=group if index == 0 else None)
-                ax.errorbar(index + offset * .3, value, yerr=[[value - metric["ci_low"]],
+                ax.bar(index + offset * width, value, width=width * .9, label=group if index == 0 else None)
+                ax.errorbar(index + offset * width, value, yerr=[[value - metric["ci_low"]],
                     [metric["ci_high"] - value]], color="black", capsize=3)
-    ax.set(xticks=[.15, 1.15], xticklabels=["Mutual connectivity", "Travel time"], ylim=(0, 1.05), ylabel="Reliability")
+    center = (len(groups) - 1) * width / 2
+    ax.set(xticks=[center, 1 + center], xticklabels=["Mutual connectivity", "Travel time"], ylim=(0, 1.05), ylabel="Reliability")
     handles, labels = ax.get_legend_handles_labels()
     if handles:
         ax.legend()

@@ -95,5 +95,6 @@ def run_study(path):
     (root/'workflow_complete.json').write_text(json.dumps({
         'status': 'complete', 'default_view': summary['default_view'],
         'headline': summary['headline'], 'flood_used': config.flood_config is not None,
-        'analysis': str(config.run.output.dir), 'facility_metrics': 'separate from composite'}, indent=2)+'\n', encoding='utf-8')
+        'analysis': str(config.run.output.dir),
+        'facility_metrics': summary['headline']['facility_metrics']}, indent=2)+'\n', encoding='utf-8')
     return summary

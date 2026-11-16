@@ -3,7 +3,18 @@
 The default headline is **population-weighted**. Bridge and detour redundancy
 retain their road-based definitions. Ordinary Hansen, targeted-attack SCC share,
 travel-time reliability and mutual connectivity use resident weights for the
-headline. Both weighting views remain in `summary.json` for inspection.
+headline. All weighting views remain in `summary.json` for inspection.
+
+With facilities configured, set `analysis.default_view` to
+`"node_importance_weighted"` to include the already calculated population-plus-
+facility importance in every node-weighted graph index and the headline
+composite. Hansen uses importance at both origins and destinations; efficiency,
+removal consequences and reliability use original distinct-pair `I_i*I_j`
+weights; attack tracks original importance retained in the same selected SCC.
+Bridge and detour retain their structural definitions. This additional view is
+calculated automatically in every service-enabled run; the setting selects
+which view appears in headline charts and maps. The direct `run` command accepts
+`--default-view node_importance_weighted` with `--facilities`.
 
 Population affects both traffic demand and outcome aggregation. These answer
 different questions: how many trips load the roads, and how many residents are
@@ -99,16 +110,18 @@ capacity model to reassign; their failure routing therefore uses fixed times.
 
 ## Composite normalization and weights
 
-The six-component weighted arithmetic mean defaults to:
+The composite defaults to four equal categories: redundancy, robustness,
+accessibility and reliability each receive 25%. Metrics within a category split
+its weight equally, giving these six component coefficients:
 
 | Component | Weight | Conversion into composite |
 | --- | ---: | --- |
-| Bridge redundancy | 0.15 | `1 - bridge_fraction` |
-| Detour redundancy | 0.15 | inverse median finite detour ratio |
+| Bridge redundancy | 0.125 | `1 - bridge_fraction` |
+| Detour redundancy | 0.125 | inverse median finite detour ratio |
 | Targeted-attack robustness | 0.25 | raw AUC divided by actual removal horizon |
-| Ordinary Hansen accessibility | 0.15 | already normalized |
-| Travel-time reliability | 0.15 | original pair success fraction |
-| Mutual connectivity reliability | 0.15 | original mutually connected pair fraction |
+| Ordinary Hansen accessibility | 0.25 | already normalized |
+| Travel-time reliability | 0.125 | original pair success fraction |
+| Mutual connectivity reliability | 0.125 | original mutually connected pair fraction |
 
 Positive-weight undefined components make the composite unavailable. Missing
 components are never assigned zero or silently removed and renormalized.
@@ -133,7 +146,9 @@ Weights must be finite, nonnegative fractions summing to one. Use, for example:
 ```
 
 That example is an optional user choice; it is **not** the default. Omitting the
-section keeps the original 25%/15% weights. The traditional CLI also supports
+section uses the four equal category weights above. Explicit weights stored in
+existing configurations/manifests remain authoritative for historical replay.
+The traditional CLI also supports
 repeatable `--composite-weight METRIC=FRACTION`, `--default-view`,
 `--population-nodes`, `--metric-cost`, `--half-time-minutes` and
 `--fixed-failure-traffic`.
@@ -145,11 +160,15 @@ normalizes that raw area. **Earlier presentation scripts used directed centralit
 in 20 batches. Their attack and composite values are not interchangeable with
 production values, even when the six coefficients are identical.**
 
-## Critical facilities stay separate
+## Facility importance and capacity accessibility
 
 The existing service configuration and 2SFCA definitions are unchanged. Schools
 and hospitals retain their distinct capacity units; raw scores are not bounded
 by one and are never added to the normalized composite.
+Facility count importance contributes to the `node_importance_weighted`
+composite through attack, Hansen and reliability. Resident traffic demand and
+2SFCA supply/demand ratios continue to use population counts. Raw capacity
+accessibility and its closure shortfalls remain separate measures.
 
 When assignment reassignment and 2SFCA are both enabled, catchments and
 supply-demand ratios are recomputed for each evaluated failure state using a
@@ -172,7 +191,7 @@ study-output/
   flood/closure_manifest.json
   flood/coverage_report.txt
   analysis/network.gpkg                 # nodes, edges, traffic_arcs, facilities
-  analysis/summary.json                 # headline and both views; services separate
+  analysis/summary.json                 # headline, all weighting views, service capacities
   analysis/composite.csv                # normalized components, weights, contributions
   analysis/attack_curve.csv
   analysis/traffic_arcs.csv

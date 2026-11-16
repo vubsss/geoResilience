@@ -15,7 +15,7 @@ from .config import RunConfig
 from .failure_probabilities import compute_failure_probabilities
 from .figures import FIGURE_FILENAMES, SERVICE_FIGURE_FILENAMES, write_figures
 from .links import _link_rows
-from .metrics import compute_local_metrics, score, POPULATION_REASON
+from .metrics import compute_local_metrics, score, IMPORTANCE_REASON, POPULATION_REASON
 from .network import load_and_clean
 from .od import load_od_pairs
 from .population import prepare_population, sha256_file, study_boundary
@@ -159,6 +159,7 @@ def run(config: RunConfig, out_override=None, overwrite=False, *, time_model=Non
     facilities = prepare_services(graph, config.services) if config.services is not None else None
     weights = service_node_weights(facilities, config.services) if facilities is not None else None
     importance = combined_node_importance(population.weights, weights, config.services.population_importance) if facilities is not None else None
+    node_importance = importance[0] if importance is not None else None
     service_nodes = [node for node, weight in zip(graph, weights) if weight > 0] if weights is not None else []
     prepared_time = prepare_time_model(graph, config.travel_time, reliability_time_model) if facilities is not None else None
     routing = (prepare_static_time(graph, links, config.travel_time, prepared=prepared_time)
@@ -177,7 +178,8 @@ def run(config: RunConfig, out_override=None, overwrite=False, *, time_model=Non
     settings = {"half_distance_km": half_cost / 1000,
                 "cutoff_factor": config.accessibility.cutoff_factor, "n_jobs": jobs, "budget_bytes": budget}
     local = compute_local_metrics(graph, population.weights, coverage=config.criticality.coverage,
-        link_candidate_limit=config.criticality.link_candidates, node_candidate_limit=config.criticality.node_candidates, service_nodes=service_nodes, edge_costs=local_costs, **settings)
+        link_candidate_limit=config.criticality.link_candidates, node_candidate_limit=config.criticality.node_candidates,
+        service_nodes=service_nodes, edge_costs=local_costs, node_importance=node_importance, **settings)
     for row in local.links:
         row.update(failures.link_metrics[row["link_id"]])
     service_baseline = sfca = criticality = None
@@ -201,7 +203,7 @@ def run(config: RunConfig, out_override=None, overwrite=False, *, time_model=Non
                         f'{category}_sfca_per_1000': result.reason})
     attack = compute_targeted_attack(graph, local.links, population.weights,
         fraction=config.robustness.fraction, steps=config.robustness.steps, order=config.robustness.order, seed=config.analysis.seed,
-        service_weights=weights, node_importance=importance[0] if importance is not None else None, edge_costs=local_costs)
+        service_weights=weights, node_importance=node_importance, edge_costs=local_costs)
     reassignment = None
     if traffic is not None and config.traffic.source == 'assignment' and config.traffic.reassign_failures:
         def facility_state(times, closed):
@@ -222,7 +224,8 @@ def run(config: RunConfig, out_override=None, overwrite=False, *, time_model=Non
         connectivity_samples=config.reliability.samples, travel_time_samples=config.travel_time.samples,
         time_threshold=config.travel_time.tau, seed=config.analysis.seed, n_jobs=jobs, budget_bytes=budget,
         time_config=config.travel_time, time_model=reliability_time_model, od_inputs=od,
-        service_weights=weights, prepared_time=None if reassignment is not None else prepared_time)
+        service_weights=weights, node_importance=node_importance,
+        prepared_time=None if reassignment is not None else prepared_time)
     if reassignment is not None:
         traffic.summary['failure_reassignment'] = reassignment.summary()
     baseline = local.baseline
@@ -249,6 +252,20 @@ def run(config: RunConfig, out_override=None, overwrite=False, *, time_model=Non
         **({"traffic": traffic.summary} if traffic is not None else {})}
     if facilities is not None:
         summary['schema_version'] = 2
+        summary['node_importance_weighted'] = {**local.redundancy,
+            'targeted_attack_robustness': attack.summary['node_importance_weighted'],
+            'hansen_accessibility': score(baseline.accessibility_importance,
+                'original importance-origin mean of destination-normalized Hansen using combined node importance I', IMPORTANCE_REASON),
+            'efficiency': score(baseline.efficiency_importance,
+                'directed inverse-cost efficiency with original I_i*I_j distinct ordered-pair weights', IMPORTANCE_REASON),
+            'reachable_pair_fraction': score(baseline.reachable_fraction_importance,
+                'directed reachable fraction with original I_i*I_j distinct ordered-pair weights', IMPORTANCE_REASON),
+            **reliability.summary['node_importance_weighted']}
+        definitions['node_importance'] = (
+            'Combined importance I = population_importance * P_i/sum(P) + service_weight_i/sum(service_weight). '
+            'Importance-weighted Hansen uses I at origins and destinations; efficiency, removal losses and reliability use '
+            'original distinct ordered-pair I_i*I_j weights. Attack uses original I mass in the node-selected SCC. '
+            'Bridge, detour and betweenness retain their structural definitions. Resident demand and 2SFCA supply/demand retain population counts.')
         summary['services'] = {'schema_version': 1, 'input': facilities.summary,
             'weights': {'school': config.services.school.importance, 'hospital': config.services.hospital.importance,
                 'total_service_weight': float(weights.sum()), 'definition': 'sum of category importance times attached facility count; capacity independent'},
@@ -260,7 +277,7 @@ def run(config: RunConfig, out_override=None, overwrite=False, *, time_model=Non
                     else 'population absent: one uniform demand unit per retained node; not estimated resident counts')},
             'service_weighted': {**service_baseline.summary, **reliability.summary['service_weighted'],
                 'targeted_attack_robustness': attack.summary['service_weighted']},
-            'node_importance_weighted': {'targeted_attack_robustness': attack.summary['node_importance_weighted']},
+            'node_importance_weighted': summary['node_importance_weighted'],
             'sfca': sfca.summary, 'criticality': criticality.summary,
             'limitations': 'study boundary does not correct missing neighbouring demand/supply; reliability views do not recompute 2SFCA'}
         if local_costs is not None:
@@ -328,6 +345,8 @@ def run(config: RunConfig, out_override=None, overwrite=False, *, time_model=Non
             'demand': summary['services']['demand'], 'sfca': sfca.summary,
             'facility_mappings': [row for result in sfca.categories.values() for row in result.facilities],
             'candidate_scope': local.coverage, 'time_model': prepared_time.summary}
+        manifest['pair_universe']['normalized_node_importance_pair_mass'] = baseline.universe.importance.denominator_pop
+        manifest['pair_universe']['node_importance_definition'] = definitions['node_importance']
         if demand_basis != 'population':
             manifest['units']['population'] = 'uniform node demand units; no population data supplied'
     node_records = []

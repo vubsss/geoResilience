@@ -46,7 +46,7 @@ def compare_runs(runs, output):
     ax.yaxis.grid(True, alpha=.18)
     ax.set_axisbelow(True)
     ax.legend(ncol=2, loc='upper center', bbox_to_anchor=(.5, -.12), frameon=False)
-    fig.text(.01, .01, 'Bridge/detour remain road-based. Facility metrics are separate. Failure results are modeled scenario estimates.', fontsize=8, color='#555555')
+    fig.text(.01, .01, 'Bridge/detour remain road-based. Capacity-based facility metrics are separate. Failure results are modeled scenario estimates.', fontsize=8, color='#555555')
     fig.tight_layout(rect=(0, .08, 1, 1))
     for extension in ('png', 'svg'):
         fig.savefig(output/f'components.{extension}', dpi=180, bbox_inches='tight')

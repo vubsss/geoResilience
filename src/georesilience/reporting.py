@@ -8,9 +8,11 @@ def build_report(summary):
         lines.extend(['Default result: ' + summary['default_view'],
                       'Composite: ' + (str(headline['value']) if headline['value'] is not None else 'unavailable: ' + headline['reason']),
                       'Weights: ' + str(headline['weights']),
-                      'Facility accessibility is reported separately.', ''])
+                      'Capacity-based facility accessibility is reported separately.', ''])
     default = summary.get('default_view', 'population_weighted')
-    for group in (default, 'unweighted' if default == 'population_weighted' else 'population_weighted'):
+    groups = [default, *(group for group in ('population_weighted', 'unweighted', 'node_importance_weighted')
+                         if group in summary and group != default)]
+    for group in groups:
         title = group.replace("_", " ").title()
         if group == "population_weighted" and summary["population"].get("basis") == "uniform_node_demand":
             title = "Uniform node demand weighted (population absent)"

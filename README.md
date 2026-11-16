@@ -4,10 +4,15 @@
 
 The framework now supports one configured workflow for traffic, optional flood
 probabilities, separate critical-facility accessibility, and a six-component
-composite. **Population-weighted results are the default headline.** Bridge and
-detour remain road-based; critical-facility accessibility stays separate.
-Composite weights are configurable and default to **25% attack robustness and
-15% for each of the other five metrics**. Assignment traffic is reassigned after
+composite. **Population-weighted results are the default headline.** Use
+`--default-view node_importance_weighted` with `--facilities` to include the
+already calculated population-plus-facility importance throughout node-weighted
+indices and the headline composite. Bridge and detour remain road-based;
+capacity-based critical-facility accessibility stays separate.
+Composite weights are configurable and default to **25% each for redundancy,
+robustness, accessibility and reliability**. Bridge/detour receive 12.5% each,
+attack and Hansen accessibility 25% each, and travel-time/connectivity reliability
+12.5% each. Assignment traffic is reassigned after
 sampled road failures by default.
 
 ```sh
@@ -241,6 +246,30 @@ components let you inspect both contributions separately. School/hospital
 coefficients control their relative institutional importance, not seats or beds.
 Known zero-capacity institutions retain service points.
 
+Every service-enabled run also calculates a **`node_importance_weighted`** view
+using this existing `node_importance` directly as the node mass `I_i`. Hansen
+weights destinations by `I_j`, excludes the origin from the destination
+denominator, then averages origins by `I_i`. Efficiency, reachable-pair share,
+mutual connectivity reliability and travel-time reliability use `I_i * I_j` on
+distinct original ordered pairs. Node information centrality and node/link
+accessibility, efficiency and disconnected-pair losses use the same intact
+weights and denominators after removals. Attack robustness retains its original
+importance share in the same node-selected SCC. All views share routing costs,
+failure samples and attack removals. Zero distinct importance-pair mass produces
+unavailable values with reasons.
+
+The importance-weighted six-component composite uses importance-weighted attack,
+Hansen and both reliability scores, plus the existing structural bridge and
+detour components and configured composite coefficients. Betweenness retains its
+structural shortest-path definition. Population counts used for traffic demand
+and capacity-based 2SFCA retain their resident/demand units.
+
+Select this view for the headline, maps and comparison charts with
+`--default-view node_importance_weighted`, or set
+`"analysis": {"default_view": "node_importance_weighted"}` in a study config.
+Facilities are required. The unweighted and population-weighted views remain
+available; selecting a headline does not remove any view.
+
 Population also weights resident-origin demand in service access, closure losses
 and reliability: service pairs use original `P_i * service_weight_j`, including
 co-located origin and destination. With a raster, `P_i` is allocated population.
@@ -375,7 +404,7 @@ The text output is **`report.txt`**. Enabled summary/manifest schemas are versio
 no-service schemas remain version 1. `summary.json.services` (subschema version 1)
 contains `input` coverage/provenance, `weights`, `node_importance`, `demand`,
 `service_weighted` baseline/attack/reliability measures,
-`node_importance_weighted` attack AUC, separate `sfca.school`/`sfca.hospital`
+`node_importance_weighted` indices (also at the summary top level), separate `sfca.school`/`sfca.hospital`
 summaries and `criticality` coverage/closure rankings. Each 2SFCA summary states
 units, catchment, demand basis, means, zero-access share, positive-demand supply,
 zero-demand supply and disabled supply, or an explicit unavailable reason.
@@ -387,6 +416,12 @@ identity/provenance, retained `node_id`/`node_index`, projected coordinates,
 `*_capacity` and `*_unknown_capacity_count`, `service_weight`, `node_importance`,
 `importance_population_component`, `importance_service_component`, and
 `school_sfca`/`hospital_sfca` with `*_sfca_per_1000` display values.
+Importance-weighted node fields add `hansen_accessibility_importance`,
+`information_centrality_importance`, `accessibility_drop_importance` and
+`disconnected_pair_fraction_importance`. Links add `efficiency_drop_importance`,
+`accessibility_drop_importance` and `disconnected_pair_fraction_importance`.
+`composite.csv` includes the `node_importance_weighted` view; the manifest
+records its original normalized pair mass.
 
 Both node and link layers contain per-type `*_access_shortfall`,
 `*_newly_unserved_population_share`, damaged `*_population_mean`/`*_equal_node_mean`,
